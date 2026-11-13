@@ -5,7 +5,7 @@
 Windows 10 2004+ / Windows 11 的蓝牙音频接收（A2DP Sink）连接工具。
 
 这是 [ysc3839/AudioPlaybackConnector](https://github.com/ysc3839/AudioPlaybackConnector) 的分支，重点解决
-**重连可靠性**、**Windows 11 界面**，以及长期存在的**「显示已连接但没声音」**问题。
+**重连可靠性**、**Windows 11 界面**，以及长期存在的「显示已连接但没声音」问题。
 
 > 上游版权说明：原始程序、WinRT 框架和 Direct2D 托盘图标渲染均来自 Richard Yu（MIT 许可）。
 
