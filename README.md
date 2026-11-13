@@ -29,7 +29,7 @@ Clicking outside the panel, clicking the tray icon again, or the ✕ button in t
 | Icon | Meaning |
 | --- | --- |
 | Monochrome | No connection |
-| Amber | Connecting / retrying |
+| Yellow | Connecting / retrying |
 | Green | Connected |
 
 # What this fork changes
