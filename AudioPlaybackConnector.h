@@ -14,12 +14,11 @@ namespace fs = std::filesystem;
 // ---------------------------------------------------------------------------
 // Diagnostic logging.
 //
-// The diagnostic build writes a UTF-8 log next to the executable. Every
-// reconnect decision (watcher event, presence probe, retry scheduling, Open
-// result) is recorded so a real-world failure can be diagnosed instead of
-// guessed. Set g_diagnosticLog to false for the final release build.
+// The final release ships with logging OFF. The logging code stays compiled in
+// (it is a no-op when the flag is false), so a diagnostic build only needs this
+// single flag flipped back to true - no other source changes required.
 // ---------------------------------------------------------------------------
-bool g_diagnosticLog = true;
+bool g_diagnosticLog = false;
 std::mutex g_logMutex;
 std::wstring g_logFilePath;
 
