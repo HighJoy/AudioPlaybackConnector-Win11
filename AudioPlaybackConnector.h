@@ -125,7 +125,8 @@ enum class PendingAction
 {
 	None,
 	Retry,
-	WarmupSecondConnect
+	WarmupSecondConnect,
+	ReappearProbe
 };
 
 enum class IconState
@@ -146,6 +147,7 @@ struct DeviceState
 	bool warmupDone = false;
 	bool everConnected = false;
 	bool waitingForDevice = false;
+	bool offline = false;
 	bool probing = false;
 	int warmupAttempts = 0;
 	int retryCount = 0;

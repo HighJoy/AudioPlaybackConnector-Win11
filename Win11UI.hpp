@@ -145,7 +145,8 @@ Border MakeSection(const wchar_t* title, StackPanel list)
 
 	StackPanel box;
 	TextBlock heading = MakeTextBlock(title, 13);
-	heading.Margin(Thickness{ 0, 0, 0, 8 });
+	// Match the left edge of the device rows (section padding 12 + row padding 4).
+	heading.Margin(Thickness{ 4, 0, 0, 8 });
 	box.Children().Append(heading);
 	box.Children().Append(list);
 	section.Child(box);
@@ -156,13 +157,13 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	ConnectionPhase phase, const std::wstring& id, bool catalogRow)
 {
 	Border row = MakeCard(CornerRadius{ 10, 10, 10, 10 }, g_lightTheme ? 14 : 24);
-	row.Padding(Thickness{ 12, 9, 12, 9 });
+	row.Padding(Thickness{ 4, 9, 4, 9 });
 	row.Margin(Thickness{ 0, 0, 0, 6 });
 
-	// Two columns: a vertical stack (name on the first line, status on its own
-	// second line) on the left, and a compact action button on the right.
-	// Putting the status on a separate line is what prevents long messages such
-	// as "device unavailable" from overlapping the button.
+	// Two columns: a vertical text stack (name on line 1, status on line 2)
+	// on the left, and a compact action button on the right. Removing the
+	// per-row glyph makes every label - section heading, device name and the
+	// "Connected" status - share exactly the same left edge.
 	Grid line;
 	ColumnDefinition leftColumn;
 	leftColumn.Width(GridLength{ 1.0, GridUnitType::Star });
@@ -174,35 +175,20 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	StackPanel info;
 	info.VerticalAlignment(VerticalAlignment::Center);
 
-	StackPanel nameLine;
-	nameLine.Orientation(Orientation::Horizontal);
-	nameLine.VerticalAlignment(VerticalAlignment::Center);
-
-	FontIcon icon = MakeGlyph(catalogRow ? L"\xE710" : L"\xE7F6", 16);
-	icon.Margin(Thickness{ 0, 0, 10, 0 });
-	icon.Foreground(phase == ConnectionPhase::Connected
-		? MakeBrush(255, 16, 150, 72)
-		: (phase == ConnectionPhase::Unavailable
-			? MakeBrush(255, 150, 150, 150)
-			: MakeBrush(255, 0, 120, 212)));
-
 	TextBlock nameBlock;
 	nameBlock.Text(name);
 	nameBlock.FontSize(13);
-	nameBlock.MaxWidth(176);
+	nameBlock.MaxWidth(200);
 	nameBlock.TextTrimming(TextTrimming::CharacterEllipsis);
-	nameBlock.VerticalAlignment(VerticalAlignment::Center);
-	nameLine.Children().Append(icon);
-	nameLine.Children().Append(nameBlock);
-	info.Children().Append(nameLine);
+	info.Children().Append(nameBlock);
 
 	if (!catalogRow)
 	{
 		TextBlock statusBlock;
 		statusBlock.Text(status);
 		statusBlock.FontSize(11);
-		statusBlock.MaxWidth(176);
-		statusBlock.Margin(Thickness{ 26, 2, 6, 0 });
+		statusBlock.MaxWidth(200);
+		statusBlock.Margin(Thickness{ 0, 2, 6, 0 });
 		statusBlock.TextWrapping(TextWrapping::Wrap);
 		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
 			phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
@@ -627,6 +613,13 @@ bool GetIconRect(RECT& iconRect)
 void ShowPanel()
 {
 	LogW("PANEL", L"panel opened");
+	// Opening the panel re-checks an offline device right away instead of
+	// making the user wait for the next 30 s silent probe.
+	for (auto& kv : g_deviceStates)
+	{
+		if (kv.second.offline && kv.second.pendingAction == PendingAction::ReappearProbe)
+			kv.second.actionAt = std::chrono::steady_clock::now();
+	}
 	RECT iconRect;
 	if (!GetIconRect(iconRect))
 		return;

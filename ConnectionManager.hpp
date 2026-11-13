@@ -30,6 +30,7 @@ winrt::fire_and_forget ReconnectAllAsync();
 struct AttemptResult
 {
 	bool success = false;
+	bool unreachable = false;
 	std::wstring error;
 };
 
@@ -45,6 +46,8 @@ void SetupDeviceWatcher();
 void ProcessTimerTick();
 winrt::Windows::Foundation::IAsyncOperation<bool> ProbeDevicePresentAsync(std::wstring id, bool forceProbe = false);
 winrt::fire_and_forget VerifyAndScheduleRetryAsync(std::wstring id, uint64_t gen, std::wstring reason);
+winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen);
+bool IsUnreachableHresult(int32_t code);
 
 inline void RequestPanelRefresh()
 {
@@ -94,6 +97,27 @@ std::wstring FormatHresultError(winrt::hresult_error const& ex)
 		}
 	}
 	return message;
+}
+
+// Confirmed from the diagnostic log: with the phone's Bluetooth OFF,
+// OpenAsync returns UnknownFailure with ERROR_GEN_FAILURE (0x8007001F) in
+// 32-620 ms - NOT a timeout. The watcher reports no Removed event and
+// FindAllAsync still lists the paired device, so this HRESULT is the only
+// reliable "device is gone" signal on this machine.
+bool IsUnreachableHresult(int32_t code)
+{
+	switch (static_cast<uint32_t>(code))
+	{
+	case 0x8007001F: // ERROR_GEN_FAILURE - device not functioning (observed)
+	case 0x8007048F: // ERROR_DEVICE_NOT_CONNECTED
+	case 0x80070015: // ERROR_NOT_READY
+	case 0x800701B1: // ERROR_NO_SUCH_DEVICE
+	case 0x80070102: // WAIT_TIMEOUT
+	case 0x800705B4: // ERROR_TIMEOUT
+		return true;
+	default:
+		return false;
+	}
 }
 
 DeviceInformation FindDeviceInCatalog(std::wstring const& id)
@@ -182,16 +206,19 @@ winrt::Windows::Foundation::IAsyncOperation<bool> ProbeDevicePresentAsync(std::w
 
 void MarkDeviceUnavailable(std::wstring const& id)
 {
-	LogW("STATE", L"MarkDeviceUnavailable id=" + id);
-	// A blocked device stays blocked until DeviceWatcher reports Added/Updated,
-	// or a fresh Closed event proves it was connected a moment ago.
+	LogW("STATE", L"MarkDeviceUnavailable -> stop fast retry loop, passive probe in 30 s id=" + id);
 	g_blockedDeviceIds.insert(id);
 	g_visibleDeviceIds.erase(id);
 	auto it = g_deviceStates.find(id);
 	if (it == g_deviceStates.end())
 		return;
 	auto& state = it->second;
-	state.pendingAction = PendingAction::None;
+	state.offline = true;
+	// No visible countdown, no yellow "connecting" icon. A silent probe every
+	// 30 s is the only way to notice the device coming back, because this
+	// machine's DeviceWatcher never reports Added/Removed for Bluetooth power.
+	state.pendingAction = PendingAction::ReappearProbe;
+	state.actionAt = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 	state.probing = false;
 	state.phase = ConnectionPhase::Unavailable;
 	state.status = _(L"Device unavailable");
@@ -372,12 +399,15 @@ winrt::Windows::Foundation::IAsyncAction OpenOnceAsync(
 			result->success = true;
 			break;
 		case AudioPlaybackConnectionOpenResultStatus::RequestTimedOut:
+			result->unreachable = true;
 			result->error = _(L"The request timed out");
 			break;
 		case AudioPlaybackConnectionOpenResultStatus::DeniedBySystem:
 			result->error = _(L"The operation was denied by the system");
 			break;
 		case AudioPlaybackConnectionOpenResultStatus::UnknownFailure:
+			// The log shows status=3 with 0x8007001F when Bluetooth is OFF.
+			result->unreachable = true;
 			winrt::throw_hresult(open.ExtendedError());
 			break;
 		}
@@ -385,8 +415,11 @@ winrt::Windows::Foundation::IAsyncAction OpenOnceAsync(
 	catch (winrt::hresult_error const& ex)
 	{
 		result->success = false;
+		if (IsUnreachableHresult(static_cast<int32_t>(ex.code())))
+			result->unreachable = true;
 		result->error = FormatHresultError(ex);
-		LogW("OPEN", L"threw: " + result->error + L" id=" + id);
+		LogW("OPEN", L"threw unreachable=" + std::to_wstring(result->unreachable ? 1 : 0) +
+			L": " + result->error + L" id=" + id);
 		LOG_CAUGHT_EXCEPTION();
 	}
 
@@ -445,6 +478,8 @@ void OnConnectionClosed(std::wstring const& id, uint64_t gen, AudioPlaybackConne
 		// it again immediately.
 		g_blockedDeviceIds.erase(id);
 		g_visibleDeviceIds.insert(id);
+		state.offline = false;
+		state.pendingAction = PendingAction::None;
 		LogW("STATE", L"-> probe then retry id=" + id);
 		VerifyAndScheduleRetryAsync(std::wstring(id), gen, _(L"Connection lost"));
 	}
@@ -507,7 +542,7 @@ winrt::fire_and_forget VerifyAndScheduleRetryAsync(std::wstring id, uint64_t gen
 	{
 	auto it = g_deviceStates.find(id);
 	if (it == g_deviceStates.end() || it->second.generation != gen ||
-		it->second.manualDisconnect || !g_autoReconnect || it->second.probing)
+		it->second.manualDisconnect || !g_autoReconnect || it->second.probing || it->second.offline)
 	{
 		LogW("RETRY", L"verify skipped id=" + id + L" gen=" + std::to_wstring(gen));
 		co_return;
@@ -561,6 +596,77 @@ winrt::fire_and_forget VerifyAndScheduleRetryAsync(std::wstring id, uint64_t gen
 	}
 }
 
+void ReschedulePassiveProbe(std::wstring const& id, uint64_t gen)
+{
+	auto it = g_deviceStates.find(id);
+	if (it == g_deviceStates.end() || !it->second.offline || it->second.generation != gen)
+		return;
+	it->second.pendingAction = PendingAction::ReappearProbe;
+	it->second.actionAt = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	LogW("PROBE", L"still offline, next silent probe in 30 s id=" + id);
+}
+
+// Silent, low-frequency probe while a device is offline. It deliberately does
+// NOT change the visible phase and does not show a countdown: the UI stays at
+// "device unavailable". A single successful Open() restores the connection;
+// a failure just schedules the next probe 30 s later. This is required because
+// the DeviceWatcher on this machine reports no events when Bluetooth is turned
+// off/on, so without it the device could never come back automatically.
+winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen)
+{
+	try
+	{
+	auto it = g_deviceStates.find(id);
+	if (it == g_deviceStates.end() || !it->second.offline || it->second.generation != gen)
+		co_return;
+	if (it->second.manualDisconnect || !g_autoReconnect)
+		co_return;
+
+	auto device = FindDeviceInCatalog(id);
+	if (!device)
+		device = it->second.device;
+	if (!device)
+	{
+		ReschedulePassiveProbe(id, gen);
+		co_return;
+	}
+
+	LogW("PROBE", L"passive reappearance probe id=" + id);
+	auto attempt = std::make_shared<AttemptResult>();
+	co_await OpenOnceAsync(device, gen, attempt);
+
+	auto current = g_deviceStates.find(id);
+	if (current == g_deviceStates.end() || !current->second.offline ||
+		current->second.generation != gen)
+		co_return;
+
+	if (attempt->success && g_audioPlaybackConnections.find(id) != g_audioPlaybackConnections.end())
+	{
+		LogW("CONNECT", L"device REAPPEARED -> connection restored id=" + id);
+		current->second.offline = false;
+		current->second.waitingForDevice = false;
+		current->second.pendingAction = PendingAction::None;
+		current->second.phase = ConnectionPhase::Connected;
+		current->second.status = _(L"Connected");
+		current->second.retryCount = 0;
+		current->second.everConnected = true;
+		g_blockedDeviceIds.erase(id);
+		g_visibleDeviceIds.insert(id);
+		g_lastError.clear();
+		RequestPanelRefresh();
+		co_return;
+	}
+
+	ReschedulePassiveProbe(id, gen);
+	}
+	catch (winrt::hresult_error const& ex)
+	{
+		LogW("PROBE", L"passive probe threw: " + FormatHresultError(ex));
+		LOG_CAUGHT_EXCEPTION();
+		ReschedulePassiveProbe(id, gen);
+	}
+}
+
 winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInformation device)
 {
 	auto id = std::wstring(device.Id());
@@ -594,12 +700,12 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 	{
 		current.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current.status;
-		const bool timedOut = attempt->error.find(_(L"The request timed out")) != std::wstring::npos;
-		if (timedOut)
+		const bool unreachable = attempt->unreachable;
+		if (unreachable)
 		{
-			// Open() timed out: the source is unreachable. Block it immediately,
-			// no further attempts until the watcher sees it again.
-			LogW("CONNECT", L"Open TIMED OUT -> block device id=" + id);
+			// Confirmed unreachable (timed out or 0x8007001F): stop the fast
+			// backoff loop immediately and switch to the silent 30 s probe.
+			LogW("CONNECT", L"device UNREACHABLE -> stop retry loop id=" + id);
 			MarkDeviceUnavailable(id);
 			RequestPanelRefresh();
 			co_return;
@@ -611,6 +717,9 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 
 	current.everConnected = true;
 	current.retryCount = 0;
+	current.offline = false;
+	current.waitingForDevice = false;
+	current.pendingAction = PendingAction::None;
 	g_blockedDeviceIds.erase(id);
 	g_lastError.clear();
 	LogW("CONNECT", L"CONNECTED id=" + id);
@@ -702,10 +811,10 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 		current->second.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current->second.status;
 		// A failed warm-up must not turn into an endless connect/disconnect loop.
-		const bool timedOut = attempt->error.find(_(L"The request timed out")) != std::wstring::npos;
-		LogW("CONNECT", L"warm-up FAILED timedOut=" + std::to_wstring(timedOut ? 1 : 0) +
+		const bool unreachable = attempt->unreachable;
+		LogW("CONNECT", L"warm-up FAILED unreachable=" + std::to_wstring(unreachable ? 1 : 0) +
 			L" error=" + current->second.status + L" id=" + id);
-		if (timedOut)
+		if (unreachable)
 			MarkDeviceUnavailable(id);
 		else if (current->second.retryCount < 3)
 			VerifyAndScheduleRetryAsync(id, newGen, current->second.status);
@@ -736,9 +845,11 @@ winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual
 		LogW("RETRY", L"ReconnectAsync skipped (state changed) id=" + id);
 		co_return;
 	}
-	LogW("RETRY", L"ReconnectAsync enter manual=" + std::to_wstring(manual ? 1 : 0) + L" id=" + id);
+	const bool offline = it->second.offline;
+	LogW("RETRY", L"ReconnectAsync enter manual=" + std::to_wstring(manual ? 1 : 0) +
+		L" offline=" + std::to_wstring(offline ? 1 : 0) + L" id=" + id);
 
-	const bool present = co_await ProbeDevicePresentAsync(id);
+	const bool present = co_await ProbeDevicePresentAsync(id, offline);
 
 	auto current = g_deviceStates.find(id);
 	if (current == g_deviceStates.end())
@@ -905,6 +1016,7 @@ void CloseDevice(std::wstring const& id, bool manual)
 		state.generation = ++g_generationCounter;
 		state.pendingAction = PendingAction::None;
 		state.probing = false;
+		state.offline = false;
 		state.manualDisconnect = manual;
 		state.waitingForDevice = false;
 		state.suppressClosed = true;
@@ -953,13 +1065,21 @@ void ProcessTimerTick()
 
 	for (const auto& item : due)
 	{
-		LogW("TIMER", std::wstring(L"fires ") +
-			(item.action == PendingAction::Retry ? L"Retry" : L"WarmupSecondConnect") +
+		const wchar_t* actionName = L"Unknown";
+		if (item.action == PendingAction::Retry)
+			actionName = L"Retry";
+		else if (item.action == PendingAction::WarmupSecondConnect)
+			actionName = L"WarmupSecondConnect";
+		else if (item.action == PendingAction::ReappearProbe)
+			actionName = L"ReappearProbe";
+		LogW("TIMER", std::wstring(L"fires ") + actionName +
 			L" id=" + item.id + L" gen=" + std::to_wstring(item.gen));
 		if (item.action == PendingAction::Retry)
 			ReconnectAsync(item.id, item.gen, false);
 		else if (item.action == PendingAction::WarmupSecondConnect)
 			WarmupSecondConnectAsync(item.id, item.gen);
+		else if (item.action == PendingAction::ReappearProbe)
+			PassiveProbeAsync(item.id, item.gen);
 	}
 
 	if ((++g_timerTicks % 4) == 0)
