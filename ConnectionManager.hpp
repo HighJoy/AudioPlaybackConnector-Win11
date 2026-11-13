@@ -16,8 +16,6 @@
 void RefreshPanel();
 winrt::fire_and_forget ReconnectAllAsync();
 
-constexpr UINT WM_CATALOGCHANGED = WM_APP + 7;
-
 struct AttemptResult
 {
 	bool success = false;
@@ -31,6 +29,8 @@ winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual
 winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen);
 winrt::Windows::Foundation::IAsyncAction RefreshDeviceCatalogAsync();
 winrt::fire_and_forget OnCatalogChangedAsync();
+void ProcessWatcherEvents();
+void SetupDeviceWatcher();
 void ProcessTimerTick();
 
 inline void RequestPanelRefresh()
@@ -93,9 +93,14 @@ DeviceInformation FindDeviceInCatalog(std::wstring const& id)
 	return nullptr;
 }
 
-// Re-enumerate the devices that can actually serve an AudioPlaybackConnection.
-// Anything not in this list is treated as "not discoverable" and must not be
-// retried. Called on every panel open, every watcher change and before a retry.
+bool IsDeviceVisible(std::wstring const& id)
+{
+	return g_visibleDeviceIds.find(id) != g_visibleDeviceIds.end();
+}
+
+// FindAllAsync returns PAIRED audio devices even when the phone's Bluetooth is
+// off, so it must not be used to decide whether a reconnect is allowed.
+// Visibility is tracked separately by the DeviceWatcher.
 winrt::Windows::Foundation::IAsyncAction RefreshDeviceCatalogAsync()
 {
 	try
@@ -105,6 +110,13 @@ winrt::Windows::Foundation::IAsyncAction RefreshDeviceCatalogAsync()
 		for (const auto& device : devices)
 			fresh.push_back(device);
 		g_availableDevices = std::move(fresh);
+
+		if (!g_catalogInitialized)
+		{
+			g_catalogInitialized = true;
+			for (const auto& device : g_availableDevices)
+				g_visibleDeviceIds.insert(std::wstring(device.Id()));
+		}
 	}
 	catch (winrt::hresult_error const&)
 	{
@@ -125,44 +137,70 @@ void MarkDeviceUnavailable(std::wstring const& id)
 	state.status = _(L"Device unavailable");
 	state.waitingForDevice = true;
 	state.retryCount = 0;
+	g_visibleDeviceIds.erase(id);
 }
 
-// Called on the UI thread after the DeviceWatcher posts WM_CATALOGCHANGED.
+// Drain watcher events on the UI thread. A Removed event (Bluetooth switched
+// off / out of range) cancels any pending retry immediately.
+void ProcessWatcherEvents()
+{
+	std::vector<std::pair<std::wstring, bool>> events;
+	{
+		std::lock_guard<std::mutex> lock(g_watcherMutex);
+		events.swap(g_watcherEvents);
+	}
+
+	for (const auto& event : events)
+	{
+		const auto& id = event.first;
+		if (event.second)
+		{
+			g_visibleDeviceIds.insert(id);
+		}
+		else
+		{
+			g_visibleDeviceIds.erase(id);
+			auto it = g_deviceStates.find(id);
+			if (it != g_deviceStates.end() &&
+				(it->second.pendingAction != PendingAction::None ||
+				 it->second.phase == ConnectionPhase::Retrying ||
+				 it->second.phase == ConnectionPhase::Connecting))
+				MarkDeviceUnavailable(id);
+		}
+	}
+}
+
 winrt::fire_and_forget OnCatalogChangedAsync()
 {
 	try
 	{
+	ProcessWatcherEvents();
 	co_await RefreshDeviceCatalogAsync();
 
-	std::vector<std::wstring> toReconnect;
+	std::vector<DeviceInformation> resume;
 	for (auto& kv : g_deviceStates)
 	{
 		auto& state = kv.second;
-		const bool present = FindDeviceInCatalog(kv.first) != nullptr;
-
-		if (!present)
+		if (!IsDeviceVisible(kv.first))
 		{
-			// Device went away: cancel any pending connect attempt immediately.
 			if (state.pendingAction != PendingAction::None || state.phase == ConnectionPhase::Retrying)
 				MarkDeviceUnavailable(kv.first);
 			continue;
 		}
-
 		if (state.waitingForDevice && g_autoReconnect && !state.manualDisconnect)
 		{
-			state.waitingForDevice = false;
-			state.retryCount = 0;
-			state.pendingAction = PendingAction::None;
-			toReconnect.push_back(kv.first);
+			auto device = FindDeviceInCatalog(kv.first);
+			if (device)
+			{
+				state.waitingForDevice = false;
+				state.retryCount = 0;
+				state.pendingAction = PendingAction::None;
+				resume.push_back(device);
+			}
 		}
 	}
-
-	for (const auto& id : toReconnect)
-	{
-		auto it = g_deviceStates.find(id);
-		if (it != g_deviceStates.end())
-			co_await ConnectDeviceCoreAsync(FindDeviceInCatalog(id));
-	}
+	for (const auto& device : resume)
+		co_await ConnectDeviceCoreAsync(device);
 	RequestPanelRefresh();
 	}
 	catch (winrt::hresult_error const& ex)
@@ -176,14 +214,22 @@ winrt::fire_and_forget OnCatalogChangedAsync()
 void SetupDeviceWatcher()
 {
 	g_deviceWatcher = DeviceInformation::CreateWatcher(AudioPlaybackConnection::GetDeviceSelector());
-	// Callbacks never touch shared state: they only ask the UI thread to re-check.
-	g_deviceWatcher.Added([](auto const&, auto const&) {
+	// Watcher callbacks may arrive on a worker thread: only queue the id under
+	// a lock, then let the UI thread apply the state change.
+	g_deviceWatcher.Added([](auto const&, auto const& info) {
+		auto id = std::wstring(info.Id());
+		{
+			std::lock_guard<std::mutex> lock(g_watcherMutex);
+			g_watcherEvents.emplace_back(id, true);
+		}
 		PostMessageW(g_hWnd, WM_CATALOGCHANGED, 0, 0);
 	});
-	g_deviceWatcher.Removed([](auto const&, auto const&) {
-		PostMessageW(g_hWnd, WM_CATALOGCHANGED, 0, 0);
-	});
-	g_deviceWatcher.Updated([](auto const&, auto const&) {
+	g_deviceWatcher.Removed([](auto const&, auto const& update) {
+		auto id = std::wstring(update.Id());
+		{
+			std::lock_guard<std::mutex> lock(g_watcherMutex);
+			g_watcherEvents.emplace_back(id, false);
+		}
 		PostMessageW(g_hWnd, WM_CATALOGCHANGED, 0, 0);
 	});
 	g_deviceWatcher.Start();
@@ -295,6 +341,15 @@ void ScheduleRetry(std::wstring const& id, uint64_t gen, std::wstring const& rea
 	if (state.manualDisconnect || !g_autoReconnect)
 		return;
 
+	// Global guard: never schedule another connect attempt for a device the
+	// watcher currently cannot see. This is the fix for "Bluetooth is off but
+	// the app keeps retrying".
+	if (g_catalogInitialized && !IsDeviceVisible(id))
+	{
+		MarkDeviceUnavailable(id);
+		return;
+	}
+
 	if (g_maxRetries > 0 && state.retryCount >= g_maxRetries)
 	{
 		state.phase = ConnectionPhase::Failed;
@@ -342,10 +397,20 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 	const bool stillOpen = g_audioPlaybackConnections.find(id) != g_audioPlaybackConnections.end();
 	if (!attempt->success || !stillOpen)
 	{
-		current.phase = ConnectionPhase::Failed;
 		current.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current.status;
-		ScheduleRetry(id, gen, current.status);
+		const bool timedOut = attempt->error.find(_(L"The request timed out")) != std::wstring::npos;
+		if (timedOut || !IsDeviceVisible(id))
+		{
+			// A timed-out Open() means the source is unreachable (Bluetooth off or
+			// out of range). Stop retrying until the watcher reports it again.
+			MarkDeviceUnavailable(id);
+		}
+		else
+		{
+			current.phase = ConnectionPhase::Failed;
+			ScheduleRetry(id, gen, current.status);
+		}
 		RequestPanelRefresh();
 		co_return;
 	}
@@ -438,7 +503,10 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 		current->second.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current->second.status;
 		// A failed warm-up must not turn into an endless connect/disconnect loop.
-		if (current->second.retryCount < 3)
+		const bool timedOut = attempt->error.find(_(L"The request timed out")) != std::wstring::npos;
+		if (timedOut)
+			MarkDeviceUnavailable(id);
+		else if (current->second.retryCount < 3)
 			ScheduleRetry(id, newGen, current->second.status);
 		else
 			current->second.status = _(L"Automatic reconnect stopped");
@@ -465,7 +533,6 @@ winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual
 		co_return;
 
 	co_await RefreshDeviceCatalogAsync();
-	auto device = FindDeviceInCatalog(id);
 
 	auto current = g_deviceStates.find(id);
 	if (current == g_deviceStates.end())
@@ -473,6 +540,15 @@ winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual
 	if (!manual && (current->second.generation != gen || current->second.manualDisconnect || !g_autoReconnect))
 		co_return;
 
+	if (!IsDeviceVisible(id))
+	{
+		MarkDeviceUnavailable(id);
+		g_lastError = _(L"Device unavailable");
+		RequestPanelRefresh();
+		co_return;
+	}
+
+	auto device = FindDeviceInCatalog(id);
 	if (!device)
 	{
 		MarkDeviceUnavailable(id);
@@ -516,8 +592,14 @@ winrt::fire_and_forget ReconnectAllAsync()
 
 	for (const auto& id : ids)
 	{
-		auto device = FindDeviceInCatalog(id);
 		auto it = g_deviceStates.find(id);
+		if (!IsDeviceVisible(id))
+		{
+			if (it != g_deviceStates.end())
+				MarkDeviceUnavailable(id);
+			continue;
+		}
+		auto device = FindDeviceInCatalog(id);
 		if (!device)
 		{
 			if (it != g_deviceStates.end())
@@ -564,6 +646,11 @@ winrt::fire_and_forget RestoreLastDevices()
 	co_await RefreshDeviceCatalogAsync();
 	for (const auto& id : ids)
 	{
+		if (!IsDeviceVisible(id))
+		{
+			MarkDeviceUnavailable(id);
+			continue;
+		}
 		auto device = FindDeviceInCatalog(id);
 		if (device)
 			co_await ConnectDeviceCoreAsync(device);

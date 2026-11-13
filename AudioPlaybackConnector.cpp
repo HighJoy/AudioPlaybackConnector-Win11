@@ -6,6 +6,92 @@
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 void SetupSvgIcon();
 
+#pragma comment(lib, "dwmapi.lib")
+
+struct PopupSearch
+{
+	DWORD pid;
+	HWND best;
+	int bestArea;
+};
+
+BOOL CALLBACK EnumPopupProc(HWND hwnd, LPARAM lParam)
+{
+	auto* search = reinterpret_cast<PopupSearch*>(lParam);
+	if (!IsWindowVisible(hwnd))
+		return TRUE;
+	DWORD pid = 0;
+	GetWindowThreadProcessId(hwnd, &pid);
+	if (pid != search->pid || hwnd == g_hWnd || hwnd == g_hWndXaml)
+		return TRUE;
+	RECT rect{};
+	if (!GetWindowRect(hwnd, &rect))
+		return TRUE;
+	const int area = (rect.right - rect.left) * (rect.bottom - rect.top);
+	if (area < 8000)
+		return TRUE;
+	if (area > search->bestArea)
+	{
+		search->bestArea = area;
+		search->best = hwnd;
+	}
+	return TRUE;
+}
+
+// Round the real flyout host window, not just a border drawn inside it.
+void ApplyPopupCorners()
+{
+	PopupSearch search{ GetCurrentProcessId(), nullptr, 0 };
+	EnumWindows(EnumPopupProc, reinterpret_cast<LPARAM>(&search));
+	if (!search.best)
+		return;
+	g_popupHwnd = search.best;
+
+	DWORD preference = 2; // DWMWCP_ROUND
+	DwmSetWindowAttribute(search.best, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
+		&preference, sizeof(preference));
+
+	RECT rect{};
+	if (GetWindowRect(search.best, &rect))
+	{
+		HRGN region = CreateRoundRectRgn(0, 0, rect.right - rect.left, rect.bottom - rect.top, 18, 18);
+		if (region)
+			SetWindowRgn(search.best, region, TRUE);
+	}
+}
+
+LRESULT CALLBACK LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam)
+{
+	if (code >= 0 && g_popupHwnd &&
+		(wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN || wParam == WM_NCLBUTTONDOWN))
+	{
+		auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
+		RECT iconRect{};
+		const bool onTrayIcon = Shell_NotifyIconGetRect(&g_niid, &iconRect) == S_OK && PtInRect(&iconRect, info->pt);
+		RECT popupRect{};
+		const bool inside = GetWindowRect(g_popupHwnd, &popupRect) && PtInRect(&popupRect, info->pt);
+		if (!onTrayIcon && !inside)
+			PostMessageW(g_hWnd, WM_CLOSEPANEL, 0, 0);
+	}
+	return CallNextHookEx(g_mouseHook, code, wParam, lParam);
+}
+
+void InstallMouseHook()
+{
+	if (!g_mouseHook)
+		g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, GetModuleHandleW(nullptr), 0);
+}
+
+void UninstallMouseHook()
+{
+	if (g_mouseHook)
+	{
+		UnhookWindowsHookEx(g_mouseHook);
+		g_mouseHook = nullptr;
+	}
+	g_popupHwnd = nullptr;
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance,
 	_In_ PWSTR lpCmdLine, _In_ int nCmdShow)
 {
@@ -62,7 +148,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
 	LoadSettings();
 	SetupSvgIcon();          // icons must exist before any RefreshPanel call
-	SetupFlyout();
 	SetupMenu();
 	SetupStatusPanel();
 	SetupDeviceWatcher();
@@ -99,6 +184,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_DESTROY:
 		if (g_retryTimer) g_retryTimer.Stop();
 		if (g_deviceWatcher) g_deviceWatcher.Stop();
+		UninstallMouseHook();
 		CloseAllConnections();
 		if (g_reconnect)
 		{
@@ -118,6 +204,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		if (lParam && CompareStringOrdinal(reinterpret_cast<LPCWCH>(lParam), -1, L"ImmersiveColorSet", -1, TRUE) == CSTR_EQUAL)
 			ApplyTheme(true);
 		break;
+
+	case WM_TIMER:
+		if (wParam == POPUP_STYLE_TIMER)
+		{
+			KillTimer(hWnd, POPUP_STYLE_TIMER);
+			ApplyPopupCorners();
+			return 0;
+		}
+		break;
+
+	case WM_CLOSEPANEL:
+		ClosePanel();
+		return 0;
 
 	case WM_REFRESHPANEL:
 		RefreshPanel();
@@ -144,7 +243,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		{
 		case NIN_SELECT:
 		case NIN_KEYSELECT:
-			PostMessageW(hWnd, WM_SHOWPANEL, 0, 0);
+			// Clicking the tray icon toggles the panel; clicks elsewhere are
+			// handled by the low-level mouse hook.
+			PostMessageW(hWnd, g_panelOpen ? WM_CLOSEPANEL : WM_SHOWPANEL, 0, 0);
 			return 0;
 		case WM_CONTEXTMENU:
 		{

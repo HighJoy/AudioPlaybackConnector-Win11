@@ -9,6 +9,8 @@ using namespace winrt::Windows::UI::Xaml::Media;
 
 void UpdateNotifyIcon();
 void ShowPanel();
+void InstallMouseHook();
+void UninstallMouseHook();
 
 SolidColorBrush MakeBrush(int a, int r, int g, int b)
 {
@@ -146,7 +148,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	TextBlock statusBlock;
 	statusBlock.Text(status);
 	statusBlock.FontSize(12);
-	statusBlock.Width(88);
+	statusBlock.Width(catalogRow ? 8 : 88);
 	statusBlock.VerticalAlignment(VerticalAlignment::Center);
 	statusBlock.Foreground(phase == ConnectionPhase::Failed ||
 		phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
@@ -189,7 +191,22 @@ void SetupStatusPanel()
 	headerIcon.Margin(Thickness{ 0, 0, 10, 0 });
 	headerIcon.Foreground(MakeBrush(255, 0, 120, 212));
 	header.Children().Append(headerIcon);
-	header.Children().Append(MakeTextBlock(_(L"Audio connections"), 18));
+	TextBlock headerTitle = MakeTextBlock(_(L"Audio connections"), 18);
+	headerTitle.Width(236);
+	headerTitle.VerticalAlignment(VerticalAlignment::Center);
+	header.Children().Append(headerTitle);
+
+	Button closeButton;
+	closeButton.Content(MakeGlyph(L"\xE8BB", 12));
+	closeButton.FontSize(12);
+	closeButton.Padding(Thickness{ 9, 6, 9, 6 });
+	closeButton.CornerRadius(CornerRadius{ 8, 8, 8, 8 });
+	closeButton.Background(MakeBrush(0, 0, 0, 0));
+	closeButton.VerticalAlignment(VerticalAlignment::Center);
+	closeButton.Click([](auto const&, auto const&) {
+		PostMessageW(g_hWnd, WM_CLOSEPANEL, 0, 0);
+	});
+	header.Children().Append(closeButton);
 	content.Children().Append(header);
 
 	TextBlock subtitle = MakeTextBlock(_(L"Windows Bluetooth audio receiver"), 12, true);
@@ -272,7 +289,11 @@ void SetupStatusPanel()
 	flyout.ShouldConstrainToRootBounds(false);
 	flyout.Placement(FlyoutPlacementMode::Top);
 	flyout.Content(g_panelRoot);
-	flyout.Closed([](auto const&, auto const&) { ShowWindow(g_hWnd, SW_HIDE); });
+	flyout.Closed([](auto const&, auto const&) {
+		g_panelOpen = false;
+		UninstallMouseHook();
+		ShowWindow(g_hWnd, SW_HIDE);
+	});
 	g_panelFlyout = flyout;
 
 	ApplyTheme(false);
@@ -323,17 +344,20 @@ void RefreshPanel()
 		g_panelDeviceList.Children().Append(empty);
 	}
 
+	int catalogRows = 0;
 	for (const auto& device : g_availableDevices)
 	{
 		auto id = std::wstring(device.Id());
-		auto it = g_deviceStates.find(id);
-		const bool active = it != g_deviceStates.end() && g_audioPlaybackConnections.find(id) != g_audioPlaybackConnections.end();
-		std::wstring status = active ? std::wstring(_(L"Connected")) : std::wstring(_(L"Connect"));
-		g_panelCatalogList.Children().Append(MakeDeviceRow(std::wstring(device.Name()),
-			status, active ? ConnectionPhase::Connected : ConnectionPhase::Idle, id, true));
+		// Already-connected devices are listed in the section above: do not
+		// repeat them (and never print a "Connected" label here).
+		if (g_audioPlaybackConnections.find(id) != g_audioPlaybackConnections.end())
+			continue;
+		g_panelCatalogList.Children().Append(
+			MakeDeviceRow(std::wstring(device.Name()), L"", ConnectionPhase::Idle, id, true));
+		++catalogRows;
 	}
 
-	if (g_availableDevices.empty())
+	if (catalogRows == 0)
 	{
 		TextBlock empty = MakeTextBlock(_(L"No devices found"), 12, true);
 		empty.Margin(Thickness{ 0, 4, 0, 8 });
@@ -451,46 +475,7 @@ Border MakeMenuSeparator()
 UIElement BuildMenuContent()
 {
 	StackPanel items;
-	items.Width(236);
-
-	Button panelItem = MakeMenuButton(_(L"Open connection panel"), L"\xE8A7");
-	panelItem.Click([](auto const&, auto const&) {
-		g_menuFlyout.Hide();
-		PostMessageW(g_hWnd, WM_SHOWPANEL, 0, 0);
-	});
-	items.Children().Append(panelItem);
-
-	Button devicesItem = MakeMenuButton(_(L"Scan devices"), L"\xE710");
-	devicesItem.Click([](auto const&, auto const&) {
-		g_menuFlyout.Hide();
-		PostMessageW(g_hWnd, WM_SHOWDEVICES, 0, 0);
-	});
-	items.Children().Append(devicesItem);
-
-	Button reconnectItem = MakeMenuButton(_(L"Reconnect"), L"\xE72C");
-	reconnectItem.Click([](auto const&, auto const&) {
-		g_menuFlyout.Hide();
-		PostMessageW(g_hWnd, WM_RECONNECTALL, 0, 0);
-	});
-	items.Children().Append(reconnectItem);
-	items.Children().Append(MakeMenuSeparator());
-
-	Button autoItem = MakeMenuButton(std::wstring(g_autoReconnect ? L"\x2713  " : L"\x25CB  ").append(_(L"Auto reconnect")).c_str(), L"\xE895");
-	autoItem.Click([](auto const&, auto const&) {
-		g_autoReconnect = !g_autoReconnect;
-		SaveSettings();
-		g_menuFlyout.Hide();
-	});
-	items.Children().Append(autoItem);
-
-	Button startItem = MakeMenuButton(std::wstring(g_reconnect ? L"\x2713  " : L"\x25CB  ").append(_(L"Reconnect on next start")).c_str(), L"\xE7F6");
-	startItem.Click([](auto const&, auto const&) {
-		g_reconnect = !g_reconnect;
-		SaveSettings();
-		g_menuFlyout.Hide();
-	});
-	items.Children().Append(startItem);
-	items.Children().Append(MakeMenuSeparator());
+	items.Width(220);
 
 	Button settingsItem = MakeMenuButton(_(L"Bluetooth Settings"), L"\xE713");
 	settingsItem.Click([](auto const&, auto const&) {
@@ -502,23 +487,7 @@ UIElement BuildMenuContent()
 	Button exitItem = MakeMenuButton(_(L"Exit"), L"\xE8BB");
 	exitItem.Click([](auto const&, auto const&) {
 		g_menuFlyout.Hide();
-		if (g_audioPlaybackConnections.empty())
-		{
-			PostMessageW(g_hWnd, WM_CLOSE, 0, 0);
-			return;
-		}
-		RECT iconRect;
-		auto hr = Shell_NotifyIconGetRect(&g_niid, &iconRect);
-		if (FAILED(hr))
-		{
-			LOG_HR(hr);
-			return;
-		}
-		auto dpi = GetDpiForWindow(g_hWnd);
-		SetWindowPos(g_hWnd, HWND_TOPMOST, iconRect.left, iconRect.top, 0, 0, SWP_HIDEWINDOW);
-		g_xamlCanvas.Width(static_cast<float>((iconRect.right - iconRect.left) * USER_DEFAULT_SCREEN_DPI / dpi));
-		g_xamlCanvas.Height(static_cast<float>((iconRect.bottom - iconRect.top) * USER_DEFAULT_SCREEN_DPI / dpi));
-		g_xamlFlyout.ShowAt(g_xamlCanvas);
+		PostMessageW(g_hWnd, WM_CLOSE, 0, 0);
 	});
 	items.Children().Append(exitItem);
 
@@ -533,7 +502,11 @@ void SetupMenu()
 	Flyout menu;
 	menu.ShouldConstrainToRootBounds(false);
 	menu.Placement(FlyoutPlacementMode::Top);
-	menu.Closed([](auto const&, auto const&) { ShowWindow(g_hWnd, SW_HIDE); });
+	menu.Closed([](auto const&, auto const&) {
+		g_menuOpen = false;
+		UninstallMouseHook();
+		ShowWindow(g_hWnd, SW_HIDE);
+	});
 	g_menuFlyout = menu;
 }
 
@@ -543,7 +516,21 @@ void ShowMenu()
 	{
 		g_menuFlyout.Content(BuildMenuContent());
 		g_menuFlyout.ShowAt(g_xamlCanvas);
+		g_menuOpen = true;
+		g_panelOpen = false;
+		InstallMouseHook();
+		SetTimer(g_hWnd, POPUP_STYLE_TIMER, 120, nullptr);
 	}
+}
+
+void ClosePanel()
+{
+	g_panelOpen = false;
+	g_menuOpen = false;
+	if (g_panelFlyout) g_panelFlyout.Hide();
+	if (g_menuFlyout) g_menuFlyout.Hide();
+	UninstallMouseHook();
+	ShowWindow(g_hWnd, SW_HIDE);
 }
 
 bool GetIconRect(RECT& iconRect)
@@ -573,6 +560,11 @@ void ShowPanel()
 	RefreshDeviceCatalogAsync();
 	RefreshPanel();
 	g_panelFlyout.ShowAt(g_xamlCanvas);
+	g_panelOpen = true;
+	g_menuOpen = false;
+	InstallMouseHook();
+	// The flyout host HWND is created asynchronously; round it shortly after.
+	SetTimer(g_hWnd, POPUP_STYLE_TIMER, 120, nullptr);
 }
 
 void ShowDevices()

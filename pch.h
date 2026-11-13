@@ -18,11 +18,13 @@
 #include <shobjidl_core.h>
 #include <d2d1_3.h>
 #include <shlwapi.h>
+#include <dwmapi.h>
 
 // C++ RunTime Header Files
 #include <cstdlib>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <filesystem>
 #include <chrono>
 #include <string>
@@ -30,6 +32,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <mutex>
 
 // wil
 #ifndef _DEBUG
