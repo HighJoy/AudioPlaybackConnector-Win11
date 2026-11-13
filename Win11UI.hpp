@@ -36,17 +36,17 @@ inline Style MakeFlyoutPresenterStyle()
 	style.TargetType(winrt::xaml_typename<FlyoutPresenter>());
 
 	Setter background;
-	background.Property(FlyoutPresenter::BackgroundProperty());
+	background.Property(Control::BackgroundProperty());
 	background.Value(PanelSurfaceBrush());
 	style.Setters().Append(background);
 
 	Setter borderThickness;
-	borderThickness.Property(FlyoutPresenter::BorderThicknessProperty());
+	borderThickness.Property(Control::BorderThicknessProperty());
 	borderThickness.Value(winrt::box_value(Thickness{ 0, 0, 0, 0 }));
 	style.Setters().Append(borderThickness);
 
 	Setter padding;
-	padding.Property(FlyoutPresenter::PaddingProperty());
+	padding.Property(Control::PaddingProperty());
 	padding.Value(winrt::box_value(Thickness{ 0, 0, 0, 0 }));
 	style.Setters().Append(padding);
 
