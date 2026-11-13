@@ -24,6 +24,12 @@
 #include <cstdint>
 #include <unordered_map>
 #include <filesystem>
+#include <chrono>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <memory>
+#include <algorithm>
 
 // wil
 #ifndef _DEBUG
@@ -45,9 +51,12 @@
 #include <winrt/Windows.Foundation.Metadata.h>
 #include <winrt/Windows.Media.Audio.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
+#include <winrt/Windows.UI.Xaml.Media.h>
 #include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
 #include <winrt/Windows.UI.Xaml.Markup.h>
 

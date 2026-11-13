@@ -6,6 +6,9 @@ constexpr auto BUFFER_SIZE = 4096;
 void DefaultSettings()
 {
 	g_reconnect = false;
+	g_autoReconnect = true;
+	g_autoWarmup = true;
+	g_maxRetries = 0;
 	g_lastDevices.clear();
 }
 
@@ -32,14 +35,27 @@ void LoadSettings()
 
 		std::wstring utf16 = Utf8ToUtf16(string);
 		auto jsonObj = JsonObject::Parse(utf16);
-		g_reconnect = jsonObj.Lookup(L"reconnect").GetBoolean();
 
-		auto lastDevices = jsonObj.Lookup(L"lastDevices").GetArray();
-		g_lastDevices.reserve(lastDevices.Size());
-		for (const auto& i : lastDevices)
+		// Old config files only contain "reconnect" and "lastDevices"; missing keys
+		// must keep their defaults instead of throwing.
+		if (jsonObj.HasKey(L"reconnect"))
+			g_reconnect = jsonObj.Lookup(L"reconnect").GetBoolean();
+		if (jsonObj.HasKey(L"autoReconnect"))
+			g_autoReconnect = jsonObj.Lookup(L"autoReconnect").GetBoolean();
+		if (jsonObj.HasKey(L"autoWarmup"))
+			g_autoWarmup = jsonObj.Lookup(L"autoWarmup").GetBoolean();
+		if (jsonObj.HasKey(L"maxRetries"))
+			g_maxRetries = static_cast<int>(jsonObj.Lookup(L"maxRetries").GetNumber());
+
+		if (jsonObj.HasKey(L"lastDevices"))
 		{
-			if (i.ValueType() == JsonValueType::String)
-				g_lastDevices.push_back(std::wstring(i.GetString()));
+			auto lastDevices = jsonObj.Lookup(L"lastDevices").GetArray();
+			g_lastDevices.reserve(lastDevices.Size());
+			for (const auto& i : lastDevices)
+			{
+				if (i.ValueType() == JsonValueType::String)
+					g_lastDevices.push_back(std::wstring(i.GetString()));
+			}
 		}
 	}
 	CATCH_LOG();
@@ -51,6 +67,9 @@ void SaveSettings()
 	{
 		JsonObject jsonObj;
 		jsonObj.Insert(L"reconnect", JsonValue::CreateBooleanValue(g_reconnect));
+		jsonObj.Insert(L"autoReconnect", JsonValue::CreateBooleanValue(g_autoReconnect));
+		jsonObj.Insert(L"autoWarmup", JsonValue::CreateBooleanValue(g_autoWarmup));
+		jsonObj.Insert(L"maxRetries", JsonValue::CreateNumberValue(static_cast<double>(g_maxRetries)));
 
 		JsonArray lastDevices;
 		for (const auto& i : g_audioPlaybackConnections)

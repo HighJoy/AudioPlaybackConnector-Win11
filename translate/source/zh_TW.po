@@ -18,19 +18,15 @@ msgstr ""
 "X-Generator: Poedit 2.3.1\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: AudioPlaybackConnector.cpp:39
 msgid "Unsupported Operating System"
 msgstr "作業系統不支援"
 
-#: AudioPlaybackConnector.cpp:39
 msgid "AudioPlaybackConnector is not supported on this operating system version."
 msgstr "AudioPlaybackConnector 不支援此作業系統版本。"
 
-#: AudioPlaybackConnector.cpp:75
 msgid "AudioPlaybackConnector"
 msgstr ""
 
-#: AudioPlaybackConnector.cpp:196
 msgid ""
 "All connections will be closed.\n"
 "Exit anyway?"
@@ -38,34 +34,98 @@ msgstr ""
 "將會關閉所有連線。\n"
 "執意結束?"
 
-#: AudioPlaybackConnector.cpp:201
+msgid "Exit AudioPlaybackConnector"
+msgstr "結束 AudioPlaybackConnector"
+
 msgid "Reconnect on next start"
 msgstr "下次啟動時重新連線"
 
-#: AudioPlaybackConnector.cpp:204 AudioPlaybackConnector.cpp:240
 msgid "Exit"
 msgstr "結束"
 
-#: AudioPlaybackConnector.cpp:230
 msgid "Bluetooth Settings"
 msgstr "藍牙設定"
 
-#: AudioPlaybackConnector.cpp:287
+msgid "Open connection panel"
+msgstr "開啟連線面板"
+
+msgid "Connect a device"
+msgstr "連線新裝置"
+
+msgid "Reconnect"
+msgstr "重新連線"
+
+msgid "Auto reconnect"
+msgstr "斷線自動重連"
+
+msgid "Auto reconnect after disconnect"
+msgstr "中斷後自動重新連線"
+
+msgid "Optimize first connection (fixes silent first connect)"
+msgstr "最佳化首次連線（修正首次連線無聲音）"
+
+msgid "Options"
+msgstr "選項"
+
+msgid "Audio connections"
+msgstr "音訊連線"
+
+msgid "Windows Bluetooth audio receiver"
+msgstr "Windows 藍牙音訊接收"
+
+msgid "No devices connected yet"
+msgstr "尚未連線過任何裝置"
+
+msgid "Disconnect"
+msgstr "中斷連線"
+
+msgid "Disconnected"
+msgstr "已中斷"
+
 msgid "Connecting"
 msgstr "連線中"
 
-#: AudioPlaybackConnector.cpp:322
+msgid "Connected"
+msgstr "已連線"
+
+msgid "Initializing audio"
+msgstr "正在初始化音訊"
+
+msgid "Initializing audio (1/2)"
+msgstr "正在初始化音訊 (1/2)"
+
+msgid "Initializing audio (2/2)"
+msgstr "正在初始化音訊 (2/2)"
+
+msgid "Reconnecting in "
+msgstr "將在 "
+
+msgid "Next retry in "
+msgstr "下次重試還有 "
+
+msgid "Automatic reconnect stopped"
+msgstr "已停止自動重連"
+
+msgid "Connection lost"
+msgstr "連線已中斷"
+
+msgid "Device not found"
+msgstr "找不到裝置"
+
+msgid "The first connection is re-established once automatically to activate audio."
+msgstr "首次連線會自動重新連線一次以啟用音訊，不需手動連兩次。"
+
 msgid "The request timed out"
 msgstr "要求逾時"
 
-#: AudioPlaybackConnector.cpp:326
 msgid "The operation was denied by the system"
 msgstr "系統拒絕動作"
 
-#: AudioPlaybackConnector.cpp:337
 msgid "Unknown error"
 msgstr "未知錯誤"
 
-#: AudioPlaybackConnector.cpp:362
-msgid "Connected"
-msgstr "已連線"
+msgid "active"
+msgstr "個已連線"
+
+msgid "known devices"
+msgstr "個已知裝置"
