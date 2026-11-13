@@ -46,9 +46,14 @@ inline std::wstring GetLogFilePath()
 
 inline void InitDebugLog()
 {
+	g_logFilePath = GetLogFilePath();
+	// Logging stays OFF in the release build. Putting an empty file named
+	// "enable-debug-log" next to the exe switches it on without a rebuild, so a
+	// real-world failure can be diagnosed on demand.
+	std::error_code ec;
+	g_diagnosticLog = fs::exists(fs::path(g_logFilePath).parent_path() / L"enable-debug-log", ec);
 	if (!g_diagnosticLog)
 		return;
-	g_logFilePath = GetLogFilePath();
 	HANDLE file = CreateFileW(g_logFilePath.c_str(), GENERIC_WRITE,
 		FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, CREATE_ALWAYS,
 		FILE_ATTRIBUTE_NORMAL, nullptr);

@@ -34,8 +34,8 @@ void ApplyTheme(bool updateIcon)
 	if (g_panelRoot)
 	{
 		g_panelRoot.RequestedTheme(g_lightTheme ? ElementTheme::Light : ElementTheme::Dark);
-		g_panelRoot.Background(MakeBrush(g_lightTheme ? 248 : 38,
-			g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
+		g_panelRoot.Background(MakeBrush(255,
+			g_lightTheme ? 248 : 32, g_lightTheme ? 249 : 33, g_lightTheme ? 251 : 36));
 	}
 	if (updateIcon)
 		UpdateNotifyIcon();
@@ -145,8 +145,9 @@ Border MakeSection(const wchar_t* title, StackPanel list)
 
 	StackPanel box;
 	TextBlock heading = MakeTextBlock(title, 13);
-	// Match the left edge of the device rows (section padding 12 + row padding 4).
-	heading.Margin(Thickness{ 4, 0, 0, 8 });
+	// section padding 12 + row padding 12 == the glyph's left edge, so the
+	// heading sits exactly above the icon column in both sections.
+	heading.Margin(Thickness{ 12, 0, 0, 8 });
 	box.Children().Append(heading);
 	box.Children().Append(list);
 	section.Child(box);
@@ -157,20 +158,33 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	ConnectionPhase phase, const std::wstring& id, bool catalogRow)
 {
 	Border row = MakeCard(CornerRadius{ 10, 10, 10, 10 }, g_lightTheme ? 14 : 24);
-	row.Padding(Thickness{ 4, 9, 4, 9 });
+	row.Padding(Thickness{ 12, 9, 12, 9 });
 	row.Margin(Thickness{ 0, 0, 0, 6 });
 
-	// Two columns: a vertical text stack (name on line 1, status on line 2)
-	// on the left, and a compact action button on the right. Removing the
-	// per-row glyph makes every label - section heading, device name and the
-	// "Connected" status - share exactly the same left edge.
+	// Three fixed columns shared by BOTH lists: glyph | text stack | button.
+	// Every row uses the same layout, so the icon column, the text column and
+	// the button column line up one-to-one between the connected section and
+	// the available-devices section.
 	Grid line;
-	ColumnDefinition leftColumn;
-	leftColumn.Width(GridLength{ 1.0, GridUnitType::Star });
-	ColumnDefinition rightColumn;
-	rightColumn.Width(GridLength{ 0.0, GridUnitType::Auto });
-	line.ColumnDefinitions().Append(leftColumn);
-	line.ColumnDefinitions().Append(rightColumn);
+	ColumnDefinition iconColumn;
+	iconColumn.Width(GridLength{ 0.0, GridUnitType::Auto });
+	ColumnDefinition textColumn;
+	textColumn.Width(GridLength{ 1.0, GridUnitType::Star });
+	ColumnDefinition buttonColumn;
+	buttonColumn.Width(GridLength{ 0.0, GridUnitType::Auto });
+	line.ColumnDefinitions().Append(iconColumn);
+	line.ColumnDefinitions().Append(textColumn);
+	line.ColumnDefinitions().Append(buttonColumn);
+
+	FontIcon icon = MakeGlyph(catalogRow ? L"\xE710" : L"\xE7F6", 16);
+	icon.Width(16);
+	icon.Margin(Thickness{ 0, 0, 10, 0 });
+	icon.VerticalAlignment(VerticalAlignment::Center);
+	icon.Foreground(phase == ConnectionPhase::Connected
+		? MakeBrush(255, 16, 150, 72)
+		: (phase == ConnectionPhase::Unavailable
+			? MakeBrush(255, 150, 150, 150)
+			: MakeBrush(255, 0, 120, 212)));
 
 	StackPanel info;
 	info.VerticalAlignment(VerticalAlignment::Center);
@@ -178,7 +192,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	TextBlock nameBlock;
 	nameBlock.Text(name);
 	nameBlock.FontSize(13);
-	nameBlock.MaxWidth(200);
+	nameBlock.MaxWidth(180);
 	nameBlock.TextTrimming(TextTrimming::CharacterEllipsis);
 	info.Children().Append(nameBlock);
 
@@ -187,7 +201,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		TextBlock statusBlock;
 		statusBlock.Text(status);
 		statusBlock.FontSize(11);
-		statusBlock.MaxWidth(200);
+		statusBlock.MaxWidth(180);
 		statusBlock.Margin(Thickness{ 0, 2, 6, 0 });
 		statusBlock.TextWrapping(TextWrapping::Wrap);
 		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
@@ -202,6 +216,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		phase == ConnectionPhase::WarmingUp || phase == ConnectionPhase::Retrying;
 	Button action = MakeSmallButton(active && !catalogRow ? _(L"Disconnect") : _(L"Connect"),
 		catalogRow || !active);
+	action.VerticalAlignment(VerticalAlignment::Center);
 	if (catalogRow || !active)
 	{
 		action.Click([id](auto const&, auto const&) { ConnectCatalogDeviceAsync(id); });
@@ -211,8 +226,10 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		action.Click([id](auto const&, auto const&) { CloseDevice(id, true); });
 	}
 
-	Grid::SetColumn(info, 0);
-	Grid::SetColumn(action, 1);
+	Grid::SetColumn(icon, 0);
+	Grid::SetColumn(info, 1);
+	Grid::SetColumn(action, 2);
+	line.Children().Append(icon);
 	line.Children().Append(info);
 	line.Children().Append(action);
 	row.Child(line);
@@ -343,13 +360,22 @@ void SetupStatusPanel()
 		content.Children().Append(logHint);
 	}
 
-	// The host window already has Windows 11 rounded corners. The panel is just
-	// a flat full-bleed surface - no second rounded frame, no stroke.
+	// The host window already has Windows 11 rounded corners. The panel is a
+	// flat, FULLY OPAQUE surface: a semi-transparent background let the strip
+	// below the content show through as "transparent" whenever the panel grew
+	// after clicking Connect/Disconnect.
 	g_panelRoot = Border();
-	g_panelRoot.Background(MakeBrush(g_lightTheme ? 248 : 38,
-		g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
+	g_panelRoot.Background(MakeBrush(255,
+		g_lightTheme ? 248 : 32, g_lightTheme ? 249 : 33, g_lightTheme ? 251 : 36));
 	g_panelRoot.Padding(Thickness{ 20, 14, 20, 16 });
 	g_panelRoot.Child(content);
+	g_panelRoot.SizeChanged([](auto const&, auto const&) {
+		// The rounded window region is derived from the window rect. When the
+		// content grows (a status line appears, the list is re-laid out) the old
+		// region clips the new bottom strip - it looks like a transparent band.
+		if (g_hWnd)
+			SetTimer(g_hWnd, POPUP_STYLE_TIMER, 60, nullptr);
+	});
 
 	Flyout flyout;
 	flyout.ShouldConstrainToRootBounds(false);
@@ -461,6 +487,14 @@ void RefreshPanel()
 	}
 
 	g_updatingPanel = false;
+
+	// Force a synchronous layout pass so the flyout has already resized by the
+	// time the window region is recomputed. Without this the extra bottom strip
+	// is clipped by the old region and appears transparent.
+	if (g_panelRoot)
+		g_panelRoot.UpdateLayout();
+	if (g_hWnd && g_panelOpen)
+		SetTimer(g_hWnd, POPUP_STYLE_TIMER, 30, nullptr);
 }
 
 void SetupFlyout()

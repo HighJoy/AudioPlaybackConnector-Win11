@@ -646,13 +646,31 @@ winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen)
 		current->second.offline = false;
 		current->second.waitingForDevice = false;
 		current->second.pendingAction = PendingAction::None;
-		current->second.phase = ConnectionPhase::Connected;
-		current->second.status = _(L"Connected");
 		current->second.retryCount = 0;
 		current->second.everConnected = true;
 		g_blockedDeviceIds.erase(id);
 		g_visibleDeviceIds.insert(id);
 		g_lastError.clear();
+
+		// Turning the radio back on is a COMPLETE Bluetooth reconnection, so it
+		// needs the same second handshake as a first connect - otherwise the
+		// A2DP endpoint reports "connected" but stays silent.
+		if (g_autoWarmup)
+		{
+			current->second.warmupDone = false;
+			current->second.warmupAttempts = 1;
+			current->second.phase = ConnectionPhase::WarmingUp;
+			current->second.status = _(L"Initializing audio (1/2)");
+			current->second.pendingAction = PendingAction::WarmupSecondConnect;
+			current->second.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
+			LogW("CONNECT", L"recovery after offline needs warm-up handshake id=" + id);
+		}
+		else
+		{
+			current->second.warmupDone = true;
+			current->second.phase = ConnectionPhase::Connected;
+			current->second.status = _(L"Connected");
+		}
 		RequestPanelRefresh();
 		co_return;
 	}
@@ -715,6 +733,7 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 		co_return;
 	}
 
+	const bool recoveredFromOffline = current.offline;
 	current.everConnected = true;
 	current.retryCount = 0;
 	current.offline = false;
@@ -722,7 +741,16 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 	current.pendingAction = PendingAction::None;
 	g_blockedDeviceIds.erase(id);
 	g_lastError.clear();
-	LogW("CONNECT", L"CONNECTED id=" + id);
+	LogW("CONNECT", L"CONNECTED id=" + id + L" recoveredFromOffline=" +
+		std::to_wstring(recoveredFromOffline ? 1 : 0));
+
+	if (recoveredFromOffline)
+	{
+		// Coming back after the radio was switched off needs the handshake
+		// again, exactly like a first connection.
+		current.warmupDone = false;
+		current.warmupAttempts = 0;
+	}
 
 	if (g_autoWarmup && !current.warmupDone && current.warmupAttempts == 0)
 	{

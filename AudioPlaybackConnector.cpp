@@ -41,23 +41,42 @@ BOOL CALLBACK EnumPopupProc(HWND hwnd, LPARAM lParam)
 // Round the real flyout host window, not just a border drawn inside it.
 void ApplyPopupCorners()
 {
-	PopupSearch search{ GetCurrentProcessId(), nullptr, 0 };
-	EnumWindows(EnumPopupProc, reinterpret_cast<LPARAM>(&search));
-	if (!search.best)
-		return;
-	g_popupHwnd = search.best;
+	// Reuse the cached host window unless it is gone or hidden. Re-enumerating
+	// on every layout change is wasteful and can pick up the wrong window.
+	if (!g_popupHwnd || !IsWindow(g_popupHwnd) || !IsWindowVisible(g_popupHwnd))
+	{
+		PopupSearch search{ GetCurrentProcessId(), nullptr, 0 };
+		EnumWindows(EnumPopupProc, reinterpret_cast<LPARAM>(&search));
+		if (!search.best)
+			return;
+		g_popupHwnd = search.best;
+	}
 
 	DWORD preference = 2; // DWMWCP_ROUND
-	DwmSetWindowAttribute(search.best, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
+	DwmSetWindowAttribute(g_popupHwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
 		&preference, sizeof(preference));
 
 	RECT rect{};
-	if (GetWindowRect(search.best, &rect))
-	{
-		HRGN region = CreateRoundRectRgn(0, 0, rect.right - rect.left, rect.bottom - rect.top, 18, 18);
-		if (region)
-			SetWindowRgn(search.best, region, TRUE);
-	}
+	if (!GetWindowRect(g_popupHwnd, &rect))
+		return;
+	const int width = rect.right - rect.left;
+	const int height = rect.bottom - rect.top;
+	if (width <= 0 || height <= 0)
+		return;
+
+	// Skip the (visually flickering) region reset when nothing changed.
+	static HWND lastWindow = nullptr;
+	static int lastWidth = 0;
+	static int lastHeight = 0;
+	if (g_popupHwnd == lastWindow && width == lastWidth && height == lastHeight)
+		return;
+	lastWindow = g_popupHwnd;
+	lastWidth = width;
+	lastHeight = height;
+
+	HRGN region = CreateRoundRectRgn(0, 0, width, height, 18, 18);
+	if (region)
+		SetWindowRgn(g_popupHwnd, region, TRUE);
 }
 
 LRESULT CALLBACK LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam)
