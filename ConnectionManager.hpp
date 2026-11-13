@@ -73,7 +73,10 @@ winrt::Windows::Foundation::IAsyncAction OpenOnceAsync(
 			co_return;
 		}
 
-		g_audioPlaybackConnections[id] = std::pair(device, connection);
+		// operator[] would require a default-constructible std::pair, which
+		// C++/WinRT projection types are not. Follow upstream's emplace pattern.
+		g_audioPlaybackConnections.erase(id);
+		g_audioPlaybackConnections.emplace(id, std::pair(device, connection));
 
 		connection.StateChanged([id, gen](const auto& sender, const auto&) {
 			if (sender.State() == AudioPlaybackConnectionState::Closed)
