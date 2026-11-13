@@ -665,7 +665,7 @@ winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen)
 			current->second.phase = ConnectionPhase::WarmingUp;
 			current->second.status = _(L"Initializing audio (1/2)");
 			current->second.pendingAction = PendingAction::WarmupSecondConnect;
-			current->second.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
+			current->second.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
 			LogW("CONNECT", L"recovery after offline needs warm-up handshake id=" + id);
 		}
 		else
@@ -761,11 +761,13 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 		// endpoint is not streaming yet. Automate the manual "connect twice"
 		// workaround once, silently, after a short settle period.
 		current.warmupAttempts = 1;
-		current.warmupReopenDelayMs = recoveredFromOffline ? 1500 : 0;
+		current.warmupReopenDelayMs = recoveredFromOffline ? 1500 : 600;
 		current.phase = ConnectionPhase::WarmingUp;
 		current.status = _(L"Initializing audio (1/2)");
 		current.pendingAction = PendingAction::WarmupSecondConnect;
-		current.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
+		// Give the freshly opened link 1.5 s to settle before tearing it down for
+		// the handshake. 1.2 s was occasionally too short and left no audio.
+		current.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
 	}
 	else
 	{

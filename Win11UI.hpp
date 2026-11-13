@@ -22,9 +22,9 @@ SolidColorBrush MakeBrush(int a, int r, int g, int b)
 // ---- Unified light-grey palette -------------------------------------------
 // One flat surface colour for the whole panel. Previously the group cards had a
 // light border sitting on a dark body, which read as two different themes.
-inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 228, 228, 228); }
-inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 237, 237, 237); }
-inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 204, 204, 204); }
+inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 208, 208, 208); }
+inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 216, 216, 216); }
+inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 176, 176, 176); }
 
 // Section headings and empty-state labels sit flush against the card's inner
 // edge (the user asked for "heading at the left edge"), so they use 0 inset.
