@@ -127,6 +127,30 @@ winrt::fire_and_forget ConnectCatalogDeviceAsync(std::wstring id)
 	}
 }
 
+// A visible rectangular group so the two device lists read as distinct
+// sections. The host window is already rounded by DWM; these are INNER group
+// cards, not another frame around the whole panel.
+Border MakeSection(const wchar_t* title, StackPanel list)
+{
+	// Neutral translucent tones work in both light and dark themes and do not
+	// need to be rebuilt when the system theme changes.
+	Border section;
+	section.CornerRadius(CornerRadius{ 10, 10, 10, 10 });
+	section.BorderBrush(MakeBrush(90, 128, 128, 128));
+	section.BorderThickness(Thickness{ 1, 1, 1, 1 });
+	section.Background(MakeBrush(18, 128, 128, 128));
+	section.Padding(Thickness{ 12, 10, 12, 10 });
+	section.Margin(Thickness{ 0, 0, 0, 10 });
+
+	StackPanel box;
+	TextBlock heading = MakeTextBlock(title, 13);
+	heading.Margin(Thickness{ 0, 0, 0, 8 });
+	box.Children().Append(heading);
+	box.Children().Append(list);
+	section.Child(box);
+	return section;
+}
+
 UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	ConnectionPhase phase, const std::wstring& id, bool catalogRow)
 {
@@ -257,19 +281,15 @@ void SetupStatusPanel()
 
 	Border divider;
 	divider.Height(1);
-	divider.Margin(Thickness{ 0, 12, 0, 10 });
+	divider.Margin(Thickness{ 0, 10, 0, 10 });
 	divider.Background(MakeBrush(45, 128, 128, 128));
 	content.Children().Append(divider);
 
 	g_panelDeviceList = StackPanel();
-	content.Children().Append(g_panelDeviceList);
-
-	TextBlock catalogTitle = MakeTextBlock(_(L"Available devices"), 13);
-	catalogTitle.Margin(Thickness{ 0, 8, 0, 8 });
-	content.Children().Append(catalogTitle);
+	content.Children().Append(MakeSection(_(L"Connected devices"), g_panelDeviceList));
 
 	g_panelCatalogList = StackPanel();
-	content.Children().Append(g_panelCatalogList);
+	content.Children().Append(MakeSection(_(L"Available devices"), g_panelCatalogList));
 
 	g_panelSummary = MakeTextBlock(L"", 12, true);
 	g_panelSummary.Margin(Thickness{ 0, 4, 0, 10 });

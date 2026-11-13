@@ -136,6 +136,9 @@ msgstr "等待重连"
 msgid "Device unavailable"
 msgstr "设备不可用，已停止自动重连"
 
+msgid "Connected devices"
+msgstr "已连接的设备"
+
 msgid "Available devices"
 msgstr "可用设备"
 
