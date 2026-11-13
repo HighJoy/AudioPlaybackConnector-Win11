@@ -81,7 +81,7 @@ std::wstring FormatHresultError(winrt::hresult_error const& ex)
 		auto result = swprintf(message.data(), message.size(), L"%s (0x%08X)", ex.message().c_str(), static_cast<uint32_t>(ex.code()));
 		if (result < 0)
 		{
-			message.resize(message.size * 2);
+			message.resize(message.size() * 2);
 		}
 		else
 		{
@@ -143,9 +143,9 @@ winrt::Windows::Foundation::IAsyncOperation<bool> ProbeDevicePresentAsync(std::w
 
 	try
 	{
-		std::vector<winrt::hstring> properties{
-			winrt::hstring(L"System.Devices.Aep.IsPresent")
-		};
+		// param::async_iterable requires a WinRT collection, not std::vector.
+		auto properties = winrt::single_threaded_vector<winrt::hstring>();
+		properties.Append(winrt::hstring(L"System.Devices.Aep.IsPresent"));
 		auto devices = co_await DeviceInformation::FindAllAsync(
 			AudioPlaybackConnection::GetDeviceSelector(), properties);
 
