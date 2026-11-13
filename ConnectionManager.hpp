@@ -40,6 +40,7 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreAsync(DeviceInformatio
 winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual);
 winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen);
 winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen);
+winrt::Windows::Foundation::IAsyncAction WarmupReopenCoreAsync(std::wstring id, uint64_t gen);
 winrt::Windows::Foundation::IAsyncAction RefreshDeviceCatalogAsync();
 winrt::fire_and_forget OnCatalogChangedAsync();
 void ProcessWatcherEvents();
@@ -660,6 +661,7 @@ winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen)
 		{
 			current->second.warmupDone = false;
 			current->second.warmupAttempts = 1;
+			current->second.warmupReopenDelayMs = 1500;
 			current->second.phase = ConnectionPhase::WarmingUp;
 			current->second.status = _(L"Initializing audio (1/2)");
 			current->second.pendingAction = PendingAction::WarmupSecondConnect;
@@ -759,6 +761,7 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 		// endpoint is not streaming yet. Automate the manual "connect twice"
 		// workaround once, silently, after a short settle period.
 		current.warmupAttempts = 1;
+		current.warmupReopenDelayMs = recoveredFromOffline ? 1500 : 0;
 		current.phase = ConnectionPhase::WarmingUp;
 		current.status = _(L"Initializing audio (1/2)");
 		current.pendingAction = PendingAction::WarmupSecondConnect;
@@ -789,52 +792,8 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreAsync(DeviceInformatio
 	}
 }
 
-// Warm-up stage 1: close the connection and schedule the reopening after a real
-// pause. Reopening immediately after Close() (the previous behaviour) is too
-// fast for the A2DP endpoint to tear down: the second Open found the stale
-// endpoint and the audio stayed silent. The user's manual workaround is
-// "disconnect, wait a moment, connect again", so reproduce that timing.
-winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
-{
-	try
-	{
-	auto it = g_deviceStates.find(id);
-	if (it == g_deviceStates.end() || it->second.generation != gen)
-		co_return;
-	if (!it->second.device)
-		co_return;
-
-	LogW("CONNECT", L"warm-up stage 1: close id=" + id);
-	auto& state = it->second;
-	const auto newGen = ++g_generationCounter;
-	state.generation = newGen;
-	state.suppressClosed = true;
-
-	auto connIt = g_audioPlaybackConnections.find(id);
-	if (connIt != g_audioPlaybackConnections.end())
-	{
-		connIt->second.second.Close();
-		g_audioPlaybackConnections.erase(connIt);
-	}
-	state.suppressClosed = false;
-
-	state.phase = ConnectionPhase::WarmingUp;
-	state.status = _(L"Initializing audio (2/2)");
-	state.pendingAction = PendingAction::WarmupReopen;
-	state.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-	RequestPanelRefresh();
-	}
-	catch (winrt::hresult_error const& ex)
-	{
-		LogW("CONNECT", L"warm-up stage 1 threw: " + FormatHresultError(ex));
-		LOG_CAUGHT_EXCEPTION();
-		g_lastError = FormatHresultError(ex);
-		RequestPanelRefresh();
-	}
-}
-
-// Warm-up stage 2: reopen after the pause and finish the connection.
-winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
+// Shared body of the warm-up reopen: open the connection again and finish.
+winrt::Windows::Foundation::IAsyncAction WarmupReopenCoreAsync(std::wstring id, uint64_t gen)
 {
 	try
 	{
@@ -845,7 +804,6 @@ winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
 	if (!device)
 		co_return;
 
-	LogW("CONNECT", L"warm-up stage 2: reopen id=" + id);
 	auto attempt = std::make_shared<AttemptResult>();
 	co_await OpenOnceAsync(device, gen, attempt);
 
@@ -866,7 +824,6 @@ winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
 		current->second.phase = ConnectionPhase::Failed;
 		current->second.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current->second.status;
-		// A failed warm-up must not turn into an endless connect/disconnect loop.
 		const bool unreachable = attempt->unreachable;
 		LogW("CONNECT", L"warm-up FAILED unreachable=" + std::to_wstring(unreachable ? 1 : 0) +
 			L" error=" + current->second.status + L" id=" + id);
@@ -882,6 +839,79 @@ winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
 			current->second.status = _(L"Automatic reconnect stopped");
 	}
 	RequestPanelRefresh();
+	}
+	catch (winrt::hresult_error const& ex)
+	{
+		LogW("CONNECT", L"warm-up reopen threw: " + FormatHresultError(ex));
+		LOG_CAUGHT_EXCEPTION();
+		g_lastError = FormatHresultError(ex);
+		RequestPanelRefresh();
+	}
+}
+
+// Warm-up stage 1: close the connection, then reopen it.
+//
+// The reopen timing matters and differs per scenario, which is why it is
+// configurable (DeviceState::warmupReopenDelayMs):
+//   * FIRST connection needs an IMMEDIATE reopen - waiting 1.5 s here made the
+//     very first connection silent (the endpoint had fully torn down).
+//   * Recovery after the Bluetooth radio was switched off needs a PAUSE, so the
+//     stale A2DP endpoint is released before reopening.
+winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
+{
+	try
+	{
+	auto it = g_deviceStates.find(id);
+	if (it == g_deviceStates.end() || it->second.generation != gen)
+		co_return;
+	if (!it->second.device)
+		co_return;
+
+	auto& state = it->second;
+	const int reopenDelay = state.warmupReopenDelayMs;
+	LogW("CONNECT", L"warm-up stage 1: close, reopenDelay=" + std::to_wstring(reopenDelay) + L" id=" + id);
+
+	const auto newGen = ++g_generationCounter;
+	state.generation = newGen;
+	state.suppressClosed = true;
+
+	auto connIt = g_audioPlaybackConnections.find(id);
+	if (connIt != g_audioPlaybackConnections.end())
+	{
+		connIt->second.second.Close();
+		g_audioPlaybackConnections.erase(connIt);
+	}
+	state.suppressClosed = false;
+
+	state.phase = ConnectionPhase::WarmingUp;
+	state.status = _(L"Initializing audio (2/2)");
+	RequestPanelRefresh();
+
+	if (reopenDelay <= 0)
+	{
+		LogW("CONNECT", L"warm-up stage 2: immediate reopen id=" + id);
+		co_await WarmupReopenCoreAsync(id, newGen);
+		co_return;
+	}
+
+	state.pendingAction = PendingAction::WarmupReopen;
+	state.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(reopenDelay);
+	}
+	catch (winrt::hresult_error const& ex)
+	{
+		LogW("CONNECT", L"warm-up stage 1 threw: " + FormatHresultError(ex));
+		LOG_CAUGHT_EXCEPTION();
+		g_lastError = FormatHresultError(ex);
+		RequestPanelRefresh();
+	}
+}
+
+// Warm-up stage 2 (delayed path): reopen after the pause.
+winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
+{
+	try
+	{
+	co_await WarmupReopenCoreAsync(id, gen);
 	}
 	catch (winrt::hresult_error const& ex)
 	{

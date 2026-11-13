@@ -22,14 +22,12 @@ SolidColorBrush MakeBrush(int a, int r, int g, int b)
 // ---- Unified light-grey palette -------------------------------------------
 // One flat surface colour for the whole panel. Previously the group cards had a
 // light border sitting on a dark body, which read as two different themes.
-inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 243, 243, 243); }
-inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 255, 255, 255); }
-inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 213, 213, 213); }
+inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 228, 228, 228); }
+inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 237, 237, 237); }
+inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 204, 204, 204); }
 
-// Inner text inset: row padding (12) + glyph (16) + gap (10). Section headings
-// and empty-state labels use it so every line of text in a card shares one
-// left edge with the device names.
-constexpr double SECTION_TEXT_INSET = 38;
+// Section headings and empty-state labels sit flush against the card's inner
+// edge (the user asked for "heading at the left edge"), so they use 0 inset.
 
 bool QueryLightTheme()
 {
@@ -158,9 +156,8 @@ Border MakeSection(const wchar_t* title, StackPanel list)
 
 	StackPanel box;
 	TextBlock heading = MakeTextBlock(title, 13);
-	// Same left edge as the device names, so the heading, the name and the
-	// status line all line up inside the card.
-	heading.Margin(Thickness{ SECTION_TEXT_INSET, 0, 0, 8 });
+	// Flush left inside the card.
+	heading.Margin(Thickness{ 0, 0, 0, 8 });
 	box.Children().Append(heading);
 	box.Children().Append(list);
 	section.Child(box);
@@ -202,10 +199,13 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	StackPanel info;
 	info.VerticalAlignment(VerticalAlignment::Center);
 
+	// Both lines share the same width, text alignment and zero left margin, so
+	// the device name and the status line start on exactly the same pixel.
 	TextBlock nameBlock;
 	nameBlock.Text(name);
 	nameBlock.FontSize(13);
-	nameBlock.MaxWidth(180);
+	nameBlock.Width(176);
+	nameBlock.TextAlignment(TextAlignment::Left);
 	nameBlock.TextTrimming(TextTrimming::CharacterEllipsis);
 	info.Children().Append(nameBlock);
 
@@ -213,9 +213,10 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	{
 		TextBlock statusBlock;
 		statusBlock.Text(status);
-		statusBlock.FontSize(11);
-		statusBlock.MaxWidth(180);
-		statusBlock.Margin(Thickness{ 0, 2, 6, 0 });
+		statusBlock.FontSize(12);
+		statusBlock.Width(176);
+		statusBlock.TextAlignment(TextAlignment::Left);
+		statusBlock.Margin(Thickness{ 0, 2, 0, 0 });
 		statusBlock.TextWrapping(TextWrapping::Wrap);
 		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
 			phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
@@ -444,7 +445,7 @@ void RefreshPanel()
 	if (g_deviceStates.empty())
 	{
 		TextBlock empty = MakeTextBlock(_(L"No devices connected yet"), 13, true);
-		empty.Margin(Thickness{ SECTION_TEXT_INSET, 4, 0, 10 });
+		empty.Margin(Thickness{ 0, 4, 0, 10 });
 		g_panelDeviceList.Children().Append(empty);
 	}
 
@@ -464,7 +465,7 @@ void RefreshPanel()
 	if (catalogRows == 0)
 	{
 		TextBlock empty = MakeTextBlock(_(L"No devices found"), 12, true);
-		empty.Margin(Thickness{ SECTION_TEXT_INSET, 4, 0, 8 });
+		empty.Margin(Thickness{ 0, 4, 0, 8 });
 		g_panelCatalogList.Children().Append(empty);
 	}
 

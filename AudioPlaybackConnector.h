@@ -155,6 +155,9 @@ struct DeviceState
 	bool offline = false;
 	bool probing = false;
 	int warmupAttempts = 0;
+	// Delay between the warm-up Close() and the reopen. 0 = immediate (required
+	// for the FIRST connection); 1500 = wait (required after the radio was off).
+	int warmupReopenDelayMs = 0;
 	int retryCount = 0;
 	std::wstring status;
 	DeviceInformation device = nullptr;
