@@ -23,6 +23,7 @@
 // C++ RunTime Header Files
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>

@@ -102,9 +102,10 @@ Button MakeSmallButton(const wchar_t* text, bool accent)
 	Button button;
 	button.Content(winrt::box_value(text));
 	button.FontSize(11);
-	button.Padding(Thickness{ 10, 4, 10, 4 });
-	button.MinWidth(78);
+	button.Padding(Thickness{ 8, 4, 8, 4 });
+	button.MinWidth(60);
 	button.HorizontalAlignment(HorizontalAlignment::Right);
+	button.VerticalAlignment(VerticalAlignment::Center);
 	button.HorizontalContentAlignment(HorizontalAlignment::Center);
 	button.CornerRadius(CornerRadius{ 7, 7, 7, 7 });
 	if (accent)
@@ -158,9 +159,10 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	row.Padding(Thickness{ 12, 9, 12, 9 });
 	row.Margin(Thickness{ 0, 0, 0, 6 });
 
-	// Two-column grid: the name/status column stretches, the action column is
-	// right-aligned and always the same width, so every "Connect" button lines
-	// up in both the active list and the available-devices list.
+	// Two columns: a vertical stack (name on the first line, status on its own
+	// second line) on the left, and a compact action button on the right.
+	// Putting the status on a separate line is what prevents long messages such
+	// as "device unavailable" from overlapping the button.
 	Grid line;
 	ColumnDefinition leftColumn;
 	leftColumn.Width(GridLength{ 1.0, GridUnitType::Star });
@@ -170,8 +172,11 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	line.ColumnDefinitions().Append(rightColumn);
 
 	StackPanel info;
-	info.Orientation(Orientation::Horizontal);
 	info.VerticalAlignment(VerticalAlignment::Center);
+
+	StackPanel nameLine;
+	nameLine.Orientation(Orientation::Horizontal);
+	nameLine.VerticalAlignment(VerticalAlignment::Center);
 
 	FontIcon icon = MakeGlyph(catalogRow ? L"\xE710" : L"\xE7F6", 16);
 	icon.Margin(Thickness{ 0, 0, 10, 0 });
@@ -184,22 +189,21 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	TextBlock nameBlock;
 	nameBlock.Text(name);
 	nameBlock.FontSize(13);
-	nameBlock.MaxWidth(190);
+	nameBlock.MaxWidth(176);
 	nameBlock.TextTrimming(TextTrimming::CharacterEllipsis);
 	nameBlock.VerticalAlignment(VerticalAlignment::Center);
-
-	info.Children().Append(icon);
-	info.Children().Append(nameBlock);
+	nameLine.Children().Append(icon);
+	nameLine.Children().Append(nameBlock);
+	info.Children().Append(nameLine);
 
 	if (!catalogRow)
 	{
 		TextBlock statusBlock;
 		statusBlock.Text(status);
-		statusBlock.FontSize(12);
-		statusBlock.MaxWidth(110);
-		statusBlock.Margin(Thickness{ 10, 0, 8, 0 });
-		statusBlock.TextTrimming(TextTrimming::CharacterEllipsis);
-		statusBlock.VerticalAlignment(VerticalAlignment::Center);
+		statusBlock.FontSize(11);
+		statusBlock.MaxWidth(176);
+		statusBlock.Margin(Thickness{ 26, 2, 6, 0 });
+		statusBlock.TextWrapping(TextWrapping::Wrap);
 		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
 			phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
 			? MakeBrush(255, 210, 150, 30)
@@ -342,6 +346,16 @@ void SetupStatusPanel()
 	g_panelHint.Margin(Thickness{ 0, 8, 0, 0 });
 	g_panelHint.TextWrapping(TextWrapping::Wrap);
 	content.Children().Append(g_panelHint);
+
+	if (g_diagnosticLog)
+	{
+		TextBlock logHint = MakeTextBlock(
+			L"Diagnostic build - log file: AudioPlaybackConnector.log (same folder as this exe)", 11, true);
+		logHint.Margin(Thickness{ 0, 6, 0, 0 });
+		logHint.TextWrapping(TextWrapping::Wrap);
+		logHint.Opacity(0.6);
+		content.Children().Append(logHint);
+	}
 
 	// The host window already has Windows 11 rounded corners. The panel is just
 	// a flat full-bleed surface - no second rounded frame, no stroke.
@@ -612,6 +626,7 @@ bool GetIconRect(RECT& iconRect)
 
 void ShowPanel()
 {
+	LogW("PANEL", L"panel opened");
 	RECT iconRect;
 	if (!GetIconRect(iconRect))
 		return;

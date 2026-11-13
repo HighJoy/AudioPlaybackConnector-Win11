@@ -101,6 +101,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
 	g_hInst = hInstance;
 	winrt::init_apartment();
+	InitDebugLog();
+	LogW("START", L"=== process start (diagnostic build) === log=" + g_logFilePath);
 	LoadTranslateData();
 
 	bool supported = false;
@@ -147,6 +149,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 	desktopSource.Content(g_xamlCanvas);
 
 	LoadSettings();
+	LogW("START", L"settings autoReconnect=" + std::to_wstring(g_autoReconnect ? 1 : 0) +
+		L" warmup=" + std::to_wstring(g_autoWarmup ? 1 : 0) +
+		L" reconnectOnStart=" + std::to_wstring(g_reconnect ? 1 : 0) +
+		L" maxRetries=" + std::to_wstring(g_maxRetries) +
+		L" savedDevices=" + std::to_wstring(g_lastDevices.size()));
 	SetupSvgIcon();          // icons must exist before any RefreshPanel call
 	SetupMenu();
 	SetupStatusPanel();
