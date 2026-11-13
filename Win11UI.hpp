@@ -22,9 +22,36 @@ SolidColorBrush MakeBrush(int a, int r, int g, int b)
 // ---- Unified light-grey palette -------------------------------------------
 // One flat surface colour for the whole panel. Previously the group cards had a
 // light border sitting on a dark body, which read as two different themes.
-inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 208, 208, 208); }
-inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 216, 216, 216); }
-inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 176, 176, 176); }
+inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 32, 32, 32); }
+inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 44, 44, 44); }
+inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 61, 61, 61); }
+
+// The window is a Flyout, so the SYSTEM FlyoutPresenter paints its own
+// background, border and padding around our content. That presenter followed
+// the XAML theme while our own colours did not, which is why the frame looked
+// light while the body looked dark. Take it over so both are identical.
+inline Style MakeFlyoutPresenterStyle()
+{
+	Style style;
+	style.TargetType(winrt::xaml_typename<FlyoutPresenter>());
+
+	Setter background;
+	background.Property(FlyoutPresenter::BackgroundProperty());
+	background.Value(PanelSurfaceBrush());
+	style.Setters().Append(background);
+
+	Setter borderThickness;
+	borderThickness.Property(FlyoutPresenter::BorderThicknessProperty());
+	borderThickness.Value(winrt::box_value(Thickness{ 0, 0, 0, 0 }));
+	style.Setters().Append(borderThickness);
+
+	Setter padding;
+	padding.Property(FlyoutPresenter::PaddingProperty());
+	padding.Value(winrt::box_value(Thickness{ 0, 0, 0, 0 }));
+	style.Setters().Append(padding);
+
+	return style;
+}
 
 // Section headings and empty-state labels sit flush against the card's inner
 // edge (the user asked for "heading at the left edge"), so they use 0 inset.
@@ -40,12 +67,12 @@ bool QueryLightTheme()
 
 void ApplyTheme(bool updateIcon)
 {
-	// The panel always uses the light-grey palette regardless of the system
-	// theme; only the tray icon follows the taskbar (see UpdateNotifyIcon).
-	g_lightTheme = true;
+	// Follow Windows 11 dark: deep surface + light text. The tray icon keeps
+	// following the taskbar theme (see UpdateNotifyIcon).
+	g_lightTheme = false;
 	if (g_panelRoot)
 	{
-		g_panelRoot.RequestedTheme(ElementTheme::Light);
+		g_panelRoot.RequestedTheme(ElementTheme::Dark);
 		g_panelRoot.Background(PanelSurfaceBrush());
 	}
 	if (updateIcon)
@@ -194,7 +221,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		? MakeBrush(255, 16, 150, 72)
 		: (phase == ConnectionPhase::Unavailable
 			? MakeBrush(255, 150, 150, 150)
-			: MakeBrush(255, 0, 120, 212)));
+			: MakeBrush(255, 74, 163, 255)));
 
 	StackPanel info;
 	info.VerticalAlignment(VerticalAlignment::Center);
@@ -221,7 +248,7 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
 			phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
 			? MakeBrush(255, 210, 150, 30)
-			: MakeBrush(255, 128, 128, 128));
+			: MakeBrush(255, 160, 160, 160));
 		statusBlock.Opacity(0.9);
 		info.Children().Append(statusBlock);
 	}
@@ -271,7 +298,7 @@ void SetupStatusPanel()
 	titleRow.VerticalAlignment(VerticalAlignment::Center);
 	FontIcon headerIcon = MakeGlyph(L"\xE7F6", 20);
 	headerIcon.Margin(Thickness{ 0, 0, 10, 0 });
-	headerIcon.Foreground(MakeBrush(255, 0, 120, 212));
+	headerIcon.Foreground(MakeBrush(255, 74, 163, 255));
 	titleRow.Children().Append(headerIcon);
 	TextBlock headerTitle = MakeTextBlock(_(L"Audio connections"), 18);
 	headerTitle.VerticalAlignment(VerticalAlignment::Center);
@@ -393,6 +420,7 @@ void SetupStatusPanel()
 	Flyout flyout;
 	flyout.ShouldConstrainToRootBounds(false);
 	flyout.Placement(FlyoutPlacementMode::Top);
+	flyout.FlyoutPresenterStyle(MakeFlyoutPresenterStyle());
 	flyout.Content(g_panelRoot);
 	flyout.Closed([](auto const&, auto const&) {
 		g_panelOpen = false;
@@ -566,7 +594,7 @@ Button MakeMenuButton(const wchar_t* text, const wchar_t* glyph)
 	row.Orientation(Orientation::Horizontal);
 	FontIcon icon = MakeGlyph(glyph, 15);
 	icon.Margin(Thickness{ 0, 0, 12, 0 });
-	icon.Foreground(MakeBrush(255, 0, 120, 212));
+	icon.Foreground(MakeBrush(255, 74, 163, 255));
 	row.Children().Append(icon);
 	TextBlock label;
 	label.Text(text);
@@ -617,6 +645,7 @@ void SetupMenu()
 	Flyout menu;
 	menu.ShouldConstrainToRootBounds(false);
 	menu.Placement(FlyoutPlacementMode::Top);
+	menu.FlyoutPresenterStyle(MakeFlyoutPresenterStyle());
 	menu.Closed([](auto const&, auto const&) {
 		g_menuOpen = false;
 		UninstallMouseHook();

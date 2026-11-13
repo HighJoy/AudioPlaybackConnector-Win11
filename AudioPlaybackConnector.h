@@ -230,7 +230,7 @@ bool g_reconnect = false;
 bool g_autoReconnect = true;
 bool g_autoWarmup = true;
 int g_maxRetries = 0;
-bool g_lightTheme = true;
+bool g_lightTheme = false;
 std::vector<std::wstring> g_lastDevices;
 
 uint64_t g_generationCounter = 0;
