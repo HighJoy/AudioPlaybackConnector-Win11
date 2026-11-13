@@ -661,7 +661,7 @@ winrt::fire_and_forget PassiveProbeAsync(std::wstring id, uint64_t gen)
 		{
 			current->second.warmupDone = false;
 			current->second.warmupAttempts = 1;
-			current->second.warmupReopenDelayMs = 1500;
+			current->second.warmupReopenDelayMs = 0;
 			current->second.phase = ConnectionPhase::WarmingUp;
 			current->second.status = _(L"Initializing audio (1/2)");
 			current->second.pendingAction = PendingAction::WarmupSecondConnect;
@@ -761,7 +761,10 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreImplAsync(DeviceInform
 		// endpoint is not streaming yet. Automate the manual "connect twice"
 		// workaround once, silently, after a short settle period.
 		current.warmupAttempts = 1;
-		current.warmupReopenDelayMs = recoveredFromOffline ? 1500 : 0;
+		// Use the exact same timing as a first connection for every path: the
+		// manual "disconnect then connect again" workaround that this automates
+		// never included a pause, so no pause here either.
+		current.warmupReopenDelayMs = 0;
 		current.phase = ConnectionPhase::WarmingUp;
 		current.status = _(L"Initializing audio (1/2)");
 		current.pendingAction = PendingAction::WarmupSecondConnect;
