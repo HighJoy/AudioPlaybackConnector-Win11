@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -62,13 +62,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AudioPlaybackConnector64
+          name: AudioPlaybackConnector-Win11-x64
           path: x64/Release/AudioPlaybackConnector64.exe
 
-      - name: Publish executable to Releases
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $tag = "build-$env:GITHUB_RUN_NUMBER"
-          gh release create $tag x64/Release/AudioPlaybackConnector64.exe --title "Build $env:GITHUB_RUN_NUMBER" --notes "Automated Windows x64 build" --target $env:GITHUB_SHA
+      # Releases are published manually on purpose: creating one per commit
+      # flooded the Releases page with build-N tags. Each run now only uploads
+      # the artifact above, which is enough to validate the build.
