@@ -12,9 +12,12 @@ void UpdateNotifyIcon();
 void ShowDevicePicker();
 void ShowPanel();
 
-SolidColorBrush MakeBrush(uint8_t a, uint8_t r, uint8_t g, uint8_t b)
+SolidColorBrush MakeBrush(int a, int r, int g, int b)
 {
-	return SolidColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(a, r, g, b));
+	// int parameters avoid Level4 narrowing warnings at every call site.
+	return SolidColorBrush(winrt::Windows::UI::ColorHelper::FromArgb(
+		static_cast<uint8_t>(a), static_cast<uint8_t>(r),
+		static_cast<uint8_t>(g), static_cast<uint8_t>(b)));
 }
 
 bool QueryLightTheme()

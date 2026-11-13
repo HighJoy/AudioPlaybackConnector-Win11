@@ -41,6 +41,15 @@ jobs:
             '1 YMO "zh_TW.ymo"'
           ) | Set-Content -Path translate/generated/translate.rc -Encoding ascii
 
+      # The .ico is a binary asset; fetch it from upstream when the checkout was
+      # created from text-only files (e.g. pushed through the API).
+      - name: Ensure binary assets
+        shell: pwsh
+        run: |
+          if (-not (Test-Path AudioPlaybackConnector.ico)) {
+            Invoke-WebRequest -Uri https://raw.githubusercontent.com/ysc3839/AudioPlaybackConnector/master/AudioPlaybackConnector.ico -OutFile AudioPlaybackConnector.ico
+          }
+
       - name: Build Release x64
         run: msbuild AudioPlaybackConnector.sln /p:Configuration=Release /p:Platform=x64 /m /verbosity:minimal
 

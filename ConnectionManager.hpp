@@ -315,7 +315,12 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 		current->second.status = attempt->error.empty() ? std::wstring(_(L"Connection lost")) : attempt->error;
 		g_lastError = current->second.status;
 		g_devicePicker.SetDisplayStatus(device, current->second.status, DevicePickerDisplayStatusOptions::ShowRetryButton);
-		ScheduleRetry(id, newGen, current->second.status);
+		// A failed warm-up must not turn into an endless connect/disconnect loop
+		// when the source device does not re-initiate the A2DP stream.
+		if (current->second.retryCount < 3)
+			ScheduleRetry(id, newGen, current->second.status);
+		else
+			current->second.status = _(L"Automatic reconnect stopped");
 	}
 	RequestPanelRefresh();
 	}
