@@ -19,6 +19,18 @@ SolidColorBrush MakeBrush(int a, int r, int g, int b)
 		static_cast<uint8_t>(g), static_cast<uint8_t>(b)));
 }
 
+// ---- Unified light-grey palette -------------------------------------------
+// One flat surface colour for the whole panel. Previously the group cards had a
+// light border sitting on a dark body, which read as two different themes.
+inline SolidColorBrush PanelSurfaceBrush() { return MakeBrush(255, 243, 243, 243); }
+inline SolidColorBrush CardSurfaceBrush() { return MakeBrush(255, 255, 255, 255); }
+inline SolidColorBrush HairlineBrush() { return MakeBrush(255, 213, 213, 213); }
+
+// Inner text inset: row padding (12) + glyph (16) + gap (10). Section headings
+// and empty-state labels use it so every line of text in a card shares one
+// left edge with the device names.
+constexpr double SECTION_TEXT_INSET = 38;
+
 bool QueryLightTheme()
 {
 	DWORD value = 0, cbValue = sizeof(value);
@@ -30,12 +42,13 @@ bool QueryLightTheme()
 
 void ApplyTheme(bool updateIcon)
 {
-	g_lightTheme = QueryLightTheme();
+	// The panel always uses the light-grey palette regardless of the system
+	// theme; only the tray icon follows the taskbar (see UpdateNotifyIcon).
+	g_lightTheme = true;
 	if (g_panelRoot)
 	{
-		g_panelRoot.RequestedTheme(g_lightTheme ? ElementTheme::Light : ElementTheme::Dark);
-		g_panelRoot.Background(MakeBrush(255,
-			g_lightTheme ? 248 : 32, g_lightTheme ? 249 : 33, g_lightTheme ? 251 : 36));
+		g_panelRoot.RequestedTheme(ElementTheme::Light);
+		g_panelRoot.Background(PanelSurfaceBrush());
 	}
 	if (updateIcon)
 		UpdateNotifyIcon();
@@ -89,11 +102,11 @@ ToggleSwitch MakeSwitch(const wchar_t* text)
 // The flyout HOST window is rounded by DWM/SetWindowRgn (ApplyPopupCorners).
 // Cards therefore need no stroke and no extra rounded frame - the user asked
 // to remove the border that was added while the window itself was still square.
-Border MakeCard(CornerRadius radius, int fillAlpha)
+Border MakeCard(CornerRadius radius, int /*fillAlpha*/)
 {
 	Border card;
 	card.CornerRadius(radius);
-	card.Background(MakeBrush(fillAlpha, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
+	card.Background(CardSurfaceBrush());
 	return card;
 }
 
@@ -137,17 +150,17 @@ Border MakeSection(const wchar_t* title, StackPanel list)
 	// need to be rebuilt when the system theme changes.
 	Border section;
 	section.CornerRadius(CornerRadius{ 10, 10, 10, 10 });
-	section.BorderBrush(MakeBrush(90, 128, 128, 128));
+	section.BorderBrush(HairlineBrush());
 	section.BorderThickness(Thickness{ 1, 1, 1, 1 });
-	section.Background(MakeBrush(18, 128, 128, 128));
+	section.Background(PanelSurfaceBrush());
 	section.Padding(Thickness{ 12, 10, 12, 10 });
 	section.Margin(Thickness{ 0, 0, 0, 10 });
 
 	StackPanel box;
 	TextBlock heading = MakeTextBlock(title, 13);
-	// section padding 12 + row padding 12 == the glyph's left edge, so the
-	// heading sits exactly above the icon column in both sections.
-	heading.Margin(Thickness{ 12, 0, 0, 8 });
+	// Same left edge as the device names, so the heading, the name and the
+	// status line all line up inside the card.
+	heading.Margin(Thickness{ SECTION_TEXT_INSET, 0, 0, 8 });
 	box.Children().Append(heading);
 	box.Children().Append(list);
 	section.Child(box);
@@ -157,7 +170,7 @@ Border MakeSection(const wchar_t* title, StackPanel list)
 UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	ConnectionPhase phase, const std::wstring& id, bool catalogRow)
 {
-	Border row = MakeCard(CornerRadius{ 10, 10, 10, 10 }, g_lightTheme ? 14 : 24);
+	Border row = MakeCard(CornerRadius{ 10, 10, 10, 10 }, 0);
 	row.Padding(Thickness{ 12, 9, 12, 9 });
 	row.Margin(Thickness{ 0, 0, 0, 6 });
 
@@ -289,7 +302,7 @@ void SetupStatusPanel()
 	Border divider;
 	divider.Height(1);
 	divider.Margin(Thickness{ 0, 10, 0, 10 });
-	divider.Background(MakeBrush(45, 128, 128, 128));
+	divider.Background(HairlineBrush());
 	content.Children().Append(divider);
 
 	g_panelDeviceList = StackPanel();
@@ -315,7 +328,7 @@ void SetupStatusPanel()
 	Border divider2;
 	divider2.Height(1);
 	divider2.Margin(Thickness{ 0, 12, 0, 8 });
-	divider2.Background(MakeBrush(45, 128, 128, 128));
+	divider2.Background(HairlineBrush());
 	content.Children().Append(divider2);
 
 	content.Children().Append(MakeTextBlock(_(L"Options"), 12, true));
@@ -365,8 +378,7 @@ void SetupStatusPanel()
 	// below the content show through as "transparent" whenever the panel grew
 	// after clicking Connect/Disconnect.
 	g_panelRoot = Border();
-	g_panelRoot.Background(MakeBrush(255,
-		g_lightTheme ? 248 : 32, g_lightTheme ? 249 : 33, g_lightTheme ? 251 : 36));
+	g_panelRoot.Background(PanelSurfaceBrush());
 	g_panelRoot.Padding(Thickness{ 20, 14, 20, 16 });
 	g_panelRoot.Child(content);
 	g_panelRoot.SizeChanged([](auto const&, auto const&) {
@@ -432,7 +444,7 @@ void RefreshPanel()
 	if (g_deviceStates.empty())
 	{
 		TextBlock empty = MakeTextBlock(_(L"No devices connected yet"), 13, true);
-		empty.Margin(Thickness{ 0, 4, 0, 10 });
+		empty.Margin(Thickness{ SECTION_TEXT_INSET, 4, 0, 10 });
 		g_panelDeviceList.Children().Append(empty);
 	}
 
@@ -452,7 +464,7 @@ void RefreshPanel()
 	if (catalogRows == 0)
 	{
 		TextBlock empty = MakeTextBlock(_(L"No devices found"), 12, true);
-		empty.Margin(Thickness{ 0, 4, 0, 8 });
+		empty.Margin(Thickness{ SECTION_TEXT_INSET, 4, 0, 8 });
 		g_panelCatalogList.Children().Append(empty);
 	}
 
@@ -527,7 +539,8 @@ void SetupFlyout()
 	});
 	stackPanel.Children().Append(button);
 
-	Border border = MakeCard(CornerRadius{ 0, 0, 0, 0 }, g_lightTheme ? 245 : 38);
+	Border border = MakeCard(CornerRadius{ 0, 0, 0, 0 }, 0);
+	border.Background(PanelSurfaceBrush());
 	border.Padding(Thickness{ 16, 14, 16, 14 });
 	border.Child(stackPanel);
 
@@ -568,7 +581,7 @@ Border MakeMenuSeparator()
 	Border separator;
 	separator.Height(1);
 	separator.Margin(Thickness{ 8, 5, 8, 5 });
-	separator.Background(MakeBrush(45, 128, 128, 128));
+	separator.Background(HairlineBrush());
 	return separator;
 }
 
@@ -591,7 +604,8 @@ UIElement BuildMenuContent()
 	});
 	items.Children().Append(exitItem);
 
-	Border card = MakeCard(CornerRadius{ 0, 0, 0, 0 }, g_lightTheme ? 245 : 38);
+	Border card = MakeCard(CornerRadius{ 0, 0, 0, 0 }, 0);
+	card.Background(PanelSurfaceBrush());
 	card.Padding(Thickness{ 6, 6, 6, 6 });
 	card.Child(items);
 	return card;

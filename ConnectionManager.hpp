@@ -39,6 +39,7 @@ void ScheduleRetry(std::wstring const& id, uint64_t gen, std::wstring const& rea
 winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreAsync(DeviceInformation device);
 winrt::fire_and_forget ReconnectAsync(std::wstring id, uint64_t gen, bool manual);
 winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen);
+winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen);
 winrt::Windows::Foundation::IAsyncAction RefreshDeviceCatalogAsync();
 winrt::fire_and_forget OnCatalogChangedAsync();
 void ProcessWatcherEvents();
@@ -788,6 +789,11 @@ winrt::Windows::Foundation::IAsyncAction ConnectDeviceCoreAsync(DeviceInformatio
 	}
 }
 
+// Warm-up stage 1: close the connection and schedule the reopening after a real
+// pause. Reopening immediately after Close() (the previous behaviour) is too
+// fast for the A2DP endpoint to tear down: the second Open found the stale
+// endpoint and the audio stayed silent. The user's manual workaround is
+// "disconnect, wait a moment, connect again", so reproduce that timing.
 winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 {
 	try
@@ -795,14 +801,12 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 	auto it = g_deviceStates.find(id);
 	if (it == g_deviceStates.end() || it->second.generation != gen)
 		co_return;
-
-	auto device = it->second.device;
-	if (!device)
+	if (!it->second.device)
 		co_return;
 
-	LogW("CONNECT", L"warm-up second handshake id=" + id);
-	const auto newGen = ++g_generationCounter;
+	LogW("CONNECT", L"warm-up stage 1: close id=" + id);
 	auto& state = it->second;
+	const auto newGen = ++g_generationCounter;
 	state.generation = newGen;
 	state.suppressClosed = true;
 
@@ -816,13 +820,37 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 
 	state.phase = ConnectionPhase::WarmingUp;
 	state.status = _(L"Initializing audio (2/2)");
+	state.pendingAction = PendingAction::WarmupReopen;
+	state.actionAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
 	RequestPanelRefresh();
+	}
+	catch (winrt::hresult_error const& ex)
+	{
+		LogW("CONNECT", L"warm-up stage 1 threw: " + FormatHresultError(ex));
+		LOG_CAUGHT_EXCEPTION();
+		g_lastError = FormatHresultError(ex);
+		RequestPanelRefresh();
+	}
+}
 
+// Warm-up stage 2: reopen after the pause and finish the connection.
+winrt::fire_and_forget WarmupReopenAsync(std::wstring id, uint64_t gen)
+{
+	try
+	{
+	auto it = g_deviceStates.find(id);
+	if (it == g_deviceStates.end() || it->second.generation != gen)
+		co_return;
+	auto device = it->second.device;
+	if (!device)
+		co_return;
+
+	LogW("CONNECT", L"warm-up stage 2: reopen id=" + id);
 	auto attempt = std::make_shared<AttemptResult>();
-	co_await OpenOnceAsync(device, newGen, attempt);
+	co_await OpenOnceAsync(device, gen, attempt);
 
 	auto current = g_deviceStates.find(id);
-	if (current == g_deviceStates.end() || current->second.generation != newGen)
+	if (current == g_deviceStates.end() || current->second.generation != gen)
 		co_return;
 
 	if (attempt->success && g_audioPlaybackConnections.find(id) != g_audioPlaybackConnections.end())
@@ -843,9 +871,13 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 		LogW("CONNECT", L"warm-up FAILED unreachable=" + std::to_wstring(unreachable ? 1 : 0) +
 			L" error=" + current->second.status + L" id=" + id);
 		if (unreachable)
+		{
 			MarkDeviceUnavailable(id);
-		else if (current->second.retryCount < 3)
-			VerifyAndScheduleRetryAsync(id, newGen, current->second.status);
+			RequestPanelRefresh();
+			co_return;
+		}
+		if (current->second.retryCount < 3)
+			VerifyAndScheduleRetryAsync(id, gen, current->second.status);
 		else
 			current->second.status = _(L"Automatic reconnect stopped");
 	}
@@ -853,7 +885,7 @@ winrt::fire_and_forget WarmupSecondConnectAsync(std::wstring id, uint64_t gen)
 	}
 	catch (winrt::hresult_error const& ex)
 	{
-		LogW("CONNECT", L"warm-up threw: " + FormatHresultError(ex));
+		LogW("CONNECT", L"warm-up stage 2 threw: " + FormatHresultError(ex));
 		LOG_CAUGHT_EXCEPTION();
 		g_lastError = FormatHresultError(ex);
 		RequestPanelRefresh();
@@ -1098,6 +1130,8 @@ void ProcessTimerTick()
 			actionName = L"Retry";
 		else if (item.action == PendingAction::WarmupSecondConnect)
 			actionName = L"WarmupSecondConnect";
+		else if (item.action == PendingAction::WarmupReopen)
+			actionName = L"WarmupReopen";
 		else if (item.action == PendingAction::ReappearProbe)
 			actionName = L"ReappearProbe";
 		LogW("TIMER", std::wstring(L"fires ") + actionName +
@@ -1106,6 +1140,8 @@ void ProcessTimerTick()
 			ReconnectAsync(item.id, item.gen, false);
 		else if (item.action == PendingAction::WarmupSecondConnect)
 			WarmupSecondConnectAsync(item.id, item.gen);
+		else if (item.action == PendingAction::WarmupReopen)
+			WarmupReopenAsync(item.id, item.gen);
 		else if (item.action == PendingAction::ReappearProbe)
 			PassiveProbeAsync(item.id, item.gen);
 	}

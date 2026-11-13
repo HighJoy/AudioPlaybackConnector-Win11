@@ -324,7 +324,10 @@ void SetupSvgIcon()
 
 void UpdateNotifyIcon()
 {
-	g_lightTheme = QueryLightTheme();
+	// The tray glyph follows the taskbar (system) theme; the panel itself always
+	// uses the fixed light-grey palette, so g_lightTheme must NOT be overwritten
+	// here (it would repaint the panel with the dark palette).
+	const bool systemLight = QueryLightTheme();
 	HICON icon = nullptr;
 	switch (g_iconState)
 	{
@@ -335,7 +338,7 @@ void UpdateNotifyIcon()
 		icon = g_hIconConnected;
 		break;
 	default:
-		icon = g_lightTheme ? g_hIconIdleLight : g_hIconIdleDark;
+		icon = systemLight ? g_hIconIdleLight : g_hIconIdleDark;
 		break;
 	}
 	if (!icon)
