@@ -15,7 +15,7 @@ constexpr UINT WM_NOTIFYICON = WM_APP + 1;
 constexpr UINT WM_CONNECTDEVICE = WM_APP + 2;
 constexpr UINT WM_REFRESHPANEL = WM_APP + 3;
 constexpr UINT WM_SHOWPANEL = WM_APP + 4;
-constexpr UINT WM_SHOWPICKER = WM_APP + 5;
+constexpr UINT WM_SHOWDEVICES = WM_APP + 5;
 constexpr UINT WM_RECONNECTALL = WM_APP + 6;
 
 // A single retry / warm-up action is scheduled on the UI-thread DispatcherTimer.
@@ -27,7 +27,8 @@ enum class ConnectionPhase
 	WarmingUp,
 	Connected,
 	Retrying,
-	Failed
+	Failed,
+	Unavailable
 };
 
 enum class PendingAction
@@ -35,6 +36,13 @@ enum class PendingAction
 	None,
 	Retry,
 	WarmupSecondConnect
+};
+
+enum class IconState
+{
+	Idle,
+	Busy,
+	Connected
 };
 
 struct DeviceState
@@ -47,6 +55,7 @@ struct DeviceState
 	bool suppressClosed = false;
 	bool warmupDone = false;
 	bool everConnected = false;
+	bool waitingForDevice = false;
 	int warmupAttempts = 0;
 	int retryCount = 0;
 	std::wstring status;
@@ -57,13 +66,12 @@ HINSTANCE g_hInst;
 HWND g_hWnd;
 HWND g_hWndXaml;
 Canvas g_xamlCanvas = nullptr;
-Flyout g_xamlFlyout = nullptr;
-Flyout g_panelFlyout = nullptr;
-MenuFlyout g_xamlMenu = nullptr;
-MenuFlyoutItem g_menuAutoReconnect = nullptr;
-MenuFlyoutItem g_menuStartReconnect = nullptr;
+Flyout g_xamlFlyout = nullptr;      // exit confirmation
+Flyout g_panelFlyout = nullptr;     // main connection panel
+Flyout g_menuFlyout = nullptr;      // self-drawn rounded tray menu
 Border g_panelRoot = nullptr;
 StackPanel g_panelDeviceList = nullptr;
+StackPanel g_panelCatalogList = nullptr;
 TextBlock g_panelSummary = nullptr;
 TextBlock g_panelHint = nullptr;
 Button g_panelReconnectButton = nullptr;
@@ -71,12 +79,23 @@ ToggleSwitch g_panelAutoReconnect = nullptr;
 ToggleSwitch g_panelAutoWarmup = nullptr;
 ToggleSwitch g_panelStartReconnect = nullptr;
 bool g_updatingPanel = false;
-FocusState g_menuFocusState = FocusState::Unfocused;
-DevicePicker g_devicePicker = nullptr;
+
+// Enumerated devices shown in the new panel; no system DevicePicker is used.
+DeviceWatcher g_deviceWatcher = nullptr;
+std::vector<DeviceInformation> g_availableDevices;
+bool g_catalogRefreshing = false;
+uint64_t g_catalogGeneration = 0;
+
 std::unordered_map<std::wstring, std::pair<DeviceInformation, AudioPlaybackConnection>> g_audioPlaybackConnections;
 std::unordered_map<std::wstring, DeviceState> g_deviceStates;
-HICON g_hIconLight = nullptr;
-HICON g_hIconDark = nullptr;
+
+// Tray icon variants: idle = original monochrome, busy = amber, connected = green.
+HICON g_hIconIdleLight = nullptr;
+HICON g_hIconIdleDark = nullptr;
+HICON g_hIconBusy = nullptr;
+HICON g_hIconConnected = nullptr;
+IconState g_iconState = IconState::Idle;
+
 NOTIFYICONDATAW g_nid = {
 	.cbSize = sizeof(g_nid),
 	.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,

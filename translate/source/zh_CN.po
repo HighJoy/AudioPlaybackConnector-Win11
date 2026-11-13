@@ -128,4 +128,22 @@ msgid "active"
 msgstr "个已连接"
 
 msgid "known devices"
-msgstr "个已知设备"
+msgstr "个可用设备"
+
+msgid "Waiting to reconnect"
+msgstr "等待重连"
+
+msgid "Device unavailable"
+msgstr "设备不可用，已停止自动重连"
+
+msgid "Available devices"
+msgstr "可用设备"
+
+msgid "No devices found"
+msgstr "未发现可用设备"
+
+msgid "Scan devices"
+msgstr "扫描设备"
+
+msgid "Connect"
+msgstr "连接"
