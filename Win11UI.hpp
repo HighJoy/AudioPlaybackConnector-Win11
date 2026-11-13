@@ -32,7 +32,11 @@ void ApplyTheme(bool updateIcon)
 {
 	g_lightTheme = QueryLightTheme();
 	if (g_panelRoot)
+	{
 		g_panelRoot.RequestedTheme(g_lightTheme ? ElementTheme::Light : ElementTheme::Dark);
+		g_panelRoot.Background(MakeBrush(g_lightTheme ? 248 : 38,
+			g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
+	}
 	if (updateIcon)
 		UpdateNotifyIcon();
 	RequestPanelRefresh();
@@ -82,13 +86,14 @@ ToggleSwitch MakeSwitch(const wchar_t* text)
 	return toggle;
 }
 
+// The flyout HOST window is rounded by DWM/SetWindowRgn (ApplyPopupCorners).
+// Cards therefore need no stroke and no extra rounded frame - the user asked
+// to remove the border that was added while the window itself was still square.
 Border MakeCard(CornerRadius radius, int fillAlpha)
 {
 	Border card;
 	card.CornerRadius(radius);
 	card.Background(MakeBrush(fillAlpha, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
-	card.BorderBrush(MakeBrush(45, 128, 128, 128));
-	card.BorderThickness(Thickness{ 1, 1, 1, 1 });
 	return card;
 }
 
@@ -98,6 +103,9 @@ Button MakeSmallButton(const wchar_t* text, bool accent)
 	button.Content(winrt::box_value(text));
 	button.FontSize(11);
 	button.Padding(Thickness{ 10, 4, 10, 4 });
+	button.MinWidth(78);
+	button.HorizontalAlignment(HorizontalAlignment::Right);
+	button.HorizontalContentAlignment(HorizontalAlignment::Center);
 	button.CornerRadius(CornerRadius{ 7, 7, 7, 7 });
 	if (accent)
 	{
@@ -126,9 +134,20 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	row.Padding(Thickness{ 12, 9, 12, 9 });
 	row.Margin(Thickness{ 0, 0, 0, 6 });
 
-	StackPanel line;
-	line.Orientation(Orientation::Horizontal);
-	line.VerticalAlignment(VerticalAlignment::Center);
+	// Two-column grid: the name/status column stretches, the action column is
+	// right-aligned and always the same width, so every "Connect" button lines
+	// up in both the active list and the available-devices list.
+	Grid line;
+	ColumnDefinition leftColumn;
+	leftColumn.Width(GridLength{ 1.0, GridUnitType::Star });
+	ColumnDefinition rightColumn;
+	rightColumn.Width(GridLength{ 0.0, GridUnitType::Auto });
+	line.ColumnDefinitions().Append(leftColumn);
+	line.ColumnDefinitions().Append(rightColumn);
+
+	StackPanel info;
+	info.Orientation(Orientation::Horizontal);
+	info.VerticalAlignment(VerticalAlignment::Center);
 
 	FontIcon icon = MakeGlyph(catalogRow ? L"\xE710" : L"\xE7F6", 16);
 	icon.Margin(Thickness{ 0, 0, 10, 0 });
@@ -141,20 +160,29 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 	TextBlock nameBlock;
 	nameBlock.Text(name);
 	nameBlock.FontSize(13);
-	nameBlock.Width(160);
+	nameBlock.MaxWidth(190);
 	nameBlock.TextTrimming(TextTrimming::CharacterEllipsis);
 	nameBlock.VerticalAlignment(VerticalAlignment::Center);
 
-	TextBlock statusBlock;
-	statusBlock.Text(status);
-	statusBlock.FontSize(12);
-	statusBlock.Width(catalogRow ? 8 : 88);
-	statusBlock.VerticalAlignment(VerticalAlignment::Center);
-	statusBlock.Foreground(phase == ConnectionPhase::Failed ||
-		phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
-		? MakeBrush(255, 210, 150, 30)
-		: MakeBrush(255, 128, 128, 128));
-	statusBlock.Opacity(0.9);
+	info.Children().Append(icon);
+	info.Children().Append(nameBlock);
+
+	if (!catalogRow)
+	{
+		TextBlock statusBlock;
+		statusBlock.Text(status);
+		statusBlock.FontSize(12);
+		statusBlock.MaxWidth(110);
+		statusBlock.Margin(Thickness{ 10, 0, 8, 0 });
+		statusBlock.TextTrimming(TextTrimming::CharacterEllipsis);
+		statusBlock.VerticalAlignment(VerticalAlignment::Center);
+		statusBlock.Foreground(phase == ConnectionPhase::Failed ||
+			phase == ConnectionPhase::Retrying || phase == ConnectionPhase::Unavailable
+			? MakeBrush(255, 210, 150, 30)
+			: MakeBrush(255, 128, 128, 128));
+		statusBlock.Opacity(0.9);
+		info.Children().Append(statusBlock);
+	}
 
 	const bool active = phase == ConnectionPhase::Connected || phase == ConnectionPhase::Connecting ||
 		phase == ConnectionPhase::WarmingUp || phase == ConnectionPhase::Retrying;
@@ -169,9 +197,9 @@ UIElement MakeDeviceRow(const std::wstring& name, const std::wstring& status,
 		action.Click([id](auto const&, auto const&) { CloseDevice(id, true); });
 	}
 
-	line.Children().Append(icon);
-	line.Children().Append(nameBlock);
-	line.Children().Append(statusBlock);
+	Grid::SetColumn(info, 0);
+	Grid::SetColumn(action, 1);
+	line.Children().Append(info);
 	line.Children().Append(action);
 	row.Child(line);
 	return row;
@@ -184,17 +212,26 @@ void SetupStatusPanel()
 	StackPanel content;
 	content.Width(panelWidth);
 
-	StackPanel header;
-	header.Orientation(Orientation::Horizontal);
+	Grid header;
+	ColumnDefinition titleColumn;
+	titleColumn.Width(GridLength{ 1.0, GridUnitType::Star });
+	ColumnDefinition closeColumn;
+	closeColumn.Width(GridLength{ 0.0, GridUnitType::Auto });
+	header.ColumnDefinitions().Append(titleColumn);
+	header.ColumnDefinitions().Append(closeColumn);
 	header.Margin(Thickness{ 0, 0, 0, 2 });
+
+	StackPanel titleRow;
+	titleRow.Orientation(Orientation::Horizontal);
+	titleRow.VerticalAlignment(VerticalAlignment::Center);
 	FontIcon headerIcon = MakeGlyph(L"\xE7F6", 20);
 	headerIcon.Margin(Thickness{ 0, 0, 10, 0 });
 	headerIcon.Foreground(MakeBrush(255, 0, 120, 212));
-	header.Children().Append(headerIcon);
+	titleRow.Children().Append(headerIcon);
 	TextBlock headerTitle = MakeTextBlock(_(L"Audio connections"), 18);
-	headerTitle.Width(236);
 	headerTitle.VerticalAlignment(VerticalAlignment::Center);
-	header.Children().Append(headerTitle);
+	titleRow.Children().Append(headerTitle);
+	Grid::SetColumn(titleRow, 0);
 
 	Button closeButton;
 	closeButton.Content(MakeGlyph(L"\xE8BB", 12));
@@ -202,10 +239,15 @@ void SetupStatusPanel()
 	closeButton.Padding(Thickness{ 9, 6, 9, 6 });
 	closeButton.CornerRadius(CornerRadius{ 8, 8, 8, 8 });
 	closeButton.Background(MakeBrush(0, 0, 0, 0));
-	closeButton.VerticalAlignment(VerticalAlignment::Center);
+	closeButton.HorizontalAlignment(HorizontalAlignment::Right);
+	closeButton.VerticalAlignment(VerticalAlignment::Top);
+	closeButton.Margin(Thickness{ 8, -2, -2, 0 });
 	closeButton.Click([](auto const&, auto const&) {
 		PostMessageW(g_hWnd, WM_CLOSEPANEL, 0, 0);
 	});
+	Grid::SetColumn(closeButton, 1);
+
+	header.Children().Append(titleRow);
 	header.Children().Append(closeButton);
 	content.Children().Append(header);
 
@@ -281,8 +323,12 @@ void SetupStatusPanel()
 	g_panelHint.TextWrapping(TextWrapping::Wrap);
 	content.Children().Append(g_panelHint);
 
-	g_panelRoot = MakeCard(CornerRadius{ 14, 14, 14, 14 }, g_lightTheme ? 245 : 38);
-	g_panelRoot.Padding(Thickness{ 18, 16, 18, 16 });
+	// The host window already has Windows 11 rounded corners. The panel is just
+	// a flat full-bleed surface - no second rounded frame, no stroke.
+	g_panelRoot = Border();
+	g_panelRoot.Background(MakeBrush(g_lightTheme ? 248 : 38,
+		g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32, g_lightTheme ? 255 : 32));
+	g_panelRoot.Padding(Thickness{ 20, 14, 20, 16 });
 	g_panelRoot.Child(content);
 
 	Flyout flyout;
@@ -427,7 +473,7 @@ void SetupFlyout()
 	});
 	stackPanel.Children().Append(button);
 
-	Border border = MakeCard(CornerRadius{ 12, 12, 12, 12 }, g_lightTheme ? 245 : 38);
+	Border border = MakeCard(CornerRadius{ 0, 0, 0, 0 }, g_lightTheme ? 245 : 38);
 	border.Padding(Thickness{ 16, 14, 16, 14 });
 	border.Child(stackPanel);
 
@@ -491,7 +537,7 @@ UIElement BuildMenuContent()
 	});
 	items.Children().Append(exitItem);
 
-	Border card = MakeCard(CornerRadius{ 12, 12, 12, 12 }, g_lightTheme ? 245 : 38);
+	Border card = MakeCard(CornerRadius{ 0, 0, 0, 0 }, g_lightTheme ? 245 : 38);
 	card.Padding(Thickness{ 6, 6, 6, 6 });
 	card.Child(items);
 	return card;

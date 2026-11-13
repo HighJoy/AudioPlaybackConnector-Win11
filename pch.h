@@ -50,6 +50,7 @@
 #include <winrt/base.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Devices.Enumeration.h>
+#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.Metadata.h>
 #include <winrt/Windows.Media.Audio.h>

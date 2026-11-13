@@ -58,6 +58,7 @@ struct DeviceState
 	bool warmupDone = false;
 	bool everConnected = false;
 	bool waitingForDevice = false;
+	bool probing = false;
 	int warmupAttempts = 0;
 	int retryCount = 0;
 	std::wstring status;
@@ -90,14 +91,19 @@ ToggleSwitch g_panelAutoWarmup = nullptr;
 ToggleSwitch g_panelStartReconnect = nullptr;
 bool g_updatingPanel = false;
 
-// Device presence driven by the DeviceWatcher. FindAllAsync returns paired
-// devices even when they are powered off, so it must NOT be used to decide
-// whether a reconnect is allowed.
+// Device presence is decided ONLY by a real-time probe performed right before
+// every reconnect attempt. FindAllAsync(GetDeviceSelector()) returns PAIRED
+// devices even when their Bluetooth is switched off, so its result must never
+// be used as proof that a device is reachable.
+//
+// A device that is reported Removed by the watcher, or whose Open() timed out,
+// is put in g_blockedDeviceIds. A blocked device is never retried until the
+// watcher reports an explicit Added event for it.
 DeviceWatcher g_deviceWatcher = nullptr;
 std::unordered_set<std::wstring> g_visibleDeviceIds;
+std::unordered_set<std::wstring> g_blockedDeviceIds;
 std::mutex g_watcherMutex;
 std::vector<std::pair<std::wstring, bool>> g_watcherEvents;
-bool g_catalogInitialized = false;
 std::vector<DeviceInformation> g_availableDevices;
 uint64_t g_catalogGeneration = 0;
 
